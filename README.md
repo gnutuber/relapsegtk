@@ -2,7 +2,7 @@
 
 RelapseGtk is a Linux GTK script editor for Relapse. It connects to the local
 Relapse script socket to submit Luau scripts, shows script output, and can
-optionally expose script execution and output to local MCP clients.
+optionally expose script execution.
 
 ## Build
 
@@ -16,17 +16,6 @@ From this directory:
 ./run.sh
 ```
 
-You can also build outside the source tree:
-
-```sh
-cmake -S . -B /tmp/relapsegtk-build -DCMAKE_BUILD_TYPE=Release
-cmake --build /tmp/relapsegtk-build
-/tmp/relapsegtk-build/relapsegtk
-```
-
-The app retries the local Unix socket at `/tmp/relapse.sock` until Relapse is
-ready. It does not start or install Relapse.
-
 ## Local data
 
 - Settings: `$XDG_CONFIG_HOME/relapsegtk/settings.ini` (by default
@@ -34,17 +23,6 @@ ready. It does not start or install Relapse.
 - Tab session: `$XDG_STATE_HOME/relapsegtk/session.json` (by default
   `~/.local/state/relapsegtk/session.json`)
 - Script folder: `~/relapse-scripts-tmpdir`
-
-The tab session can contain unsaved script text and file paths. The settings
-file can contain an MCP bearer token. Do not add either file to a source
-release.
-
-## MCP server
-
-The optional MCP server is disabled by default. When enabled, it listens on
-`127.0.0.1` at the configured port. Set a bearer token before enabling its
-`execute` or `logs` tools; clients send it as `Authorization: Bearer <token>`.
-Any local process with that token can use the enabled tools.
 
 ## License
 
