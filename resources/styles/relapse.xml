@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<style-scheme id="relapse" name="Relapse" version="1.0">
+  <description>The app-owned editor palette.</description>
+  <color name="background" value="#131417"/>
+  <color name="foreground" value="#e7e8ec"/>
+  <color name="muted" value="#959aa4"/>
+  <color name="line" value="#1c1d20"/>
+  <color name="selection" value="#484d5b"/>
+  <color name="keyword" value="#c5a9eb"/>
+  <color name="string" value="#adcc92"/>
+  <color name="number" value="#d8ba86"/>
+  <color name="function" value="#94bddd"/>
+  <color name="error" value="#ee929b"/>
+
+  <style name="text" foreground="foreground" background="background"/>
+  <style name="selection" foreground="foreground" background="selection"/>
+  <style name="selection-unfocused" foreground="foreground" background="selection"/>
+  <style name="cursor" foreground="foreground"/>
+  <style name="current-line" background="line"/>
+  <style name="line-numbers" foreground="muted" background="background"/>
+  <style name="line-numbers-border" background="background"/>
+  <style name="current-line-number" foreground="foreground" background="line" bold="true"/>
+  <style name="bracket-match" foreground="foreground" background="selection" bold="true"/>
+  <style name="bracket-mismatch" foreground="error" underline="error"/>
+  <style name="draw-spaces" foreground="muted"/>
+  <style name="search-match" foreground="background" background="number"/>
+
+  <style name="def:comment" foreground="muted"/>
+  <style name="def:keyword" foreground="keyword"/>
+  <style name="def:statement" foreground="keyword"/>
+  <style name="def:type" foreground="function"/>
+  <style name="def:function" foreground="function"/>
+  <style name="def:string" foreground="string"/>
+  <style name="def:special-char" foreground="number"/>
+  <style name="def:constant" foreground="number"/>
+  <style name="def:special-constant" foreground="number"/>
+  <style name="def:boolean" foreground="number"/>
+  <style name="def:number" foreground="number"/>
+  <style name="def:decimal" foreground="number"/>
+  <style name="def:base-n-integer" foreground="number"/>
+  <style name="def:floating-point" foreground="number"/>
+  <style name="def:error" foreground="error" underline="error"/>
+</style-scheme>
