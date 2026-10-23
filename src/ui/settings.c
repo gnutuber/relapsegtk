@@ -1,25 +1,95 @@
 #include "settings.h"
 
+#include <glib/gstdio.h>
+#include <unistd.h>
+
 typedef struct {
     GtkSpinButton *font_size;
     GtkSwitch *word_wrap;
     GtkToggleButton *indent[3];
     GtkSwitch *restore_tabs;
     GtkSwitch *output;
-    GtkSpinButton *mcp_port;
-    GtkSwitch *mcp_expose_execute;
-    GtkSwitch *mcp_expose_logs;
-    GtkEntry *mcp_token;
     gboolean updating;
     SettingsChangedFunc changed;
     RestoreTabsChangedFunc restore_changed;
     OutputChangedFunc output_changed;
-    McpChangedFunc mcp_changed;
-    guint mcp_debounce;
+    GtkWidget *launcher_button;
+    GtkLabel *launcher_path;
+    GCancellable *picker;
+    LauncherChangedFunc launcher_changed;
+    gboolean stopped;
     gpointer user_data;
 } Settings;
 
 static const int indent_widths[] = {2, 4, 8};
+
+void settings_set_launcher(GtkWidget *page, const char *path)
+{
+    Settings *state = g_object_get_data(G_OBJECT(page), "settings");
+    g_autofree char *name = path && *path ? g_filename_display_basename(path) : g_strdup("None selected");
+    gtk_label_set_text(state->launcher_path, name);
+    gtk_widget_set_tooltip_text(GTK_WIDGET(state->launcher_path), path);
+}
+
+static void launcher_chosen(GObject *dialog, GAsyncResult *result, gpointer user_data)
+{
+    GWeakRef *owner = user_data;
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GFile) file = gtk_file_dialog_open_finish(GTK_FILE_DIALOG(dialog), result, &error);
+    g_autoptr(GtkWidget) page = g_weak_ref_get(owner);
+    Settings *state = page ? g_object_get_data(G_OBJECT(page), "settings") : NULL;
+    if (state && !state->stopped) {
+        g_clear_object(&state->picker);
+        gtk_widget_set_sensitive(state->launcher_button, TRUE);
+        if (file) {
+            g_autofree char *path = g_file_get_path(file);
+            if (!path || !g_file_test(path, G_FILE_TEST_IS_REGULAR) || g_access(path, X_OK) != 0)
+                g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Choose a local executable file.");
+            else if (!state->launcher_changed || state->launcher_changed(path, &error, state->user_data))
+                settings_set_launcher(page, path);
+        }
+        if (error && !g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED) &&
+            !g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_CANCELLED) &&
+            !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+            g_autoptr(GtkAlertDialog) alert = gtk_alert_dialog_new("Could not select launcher");
+            gtk_alert_dialog_set_detail(alert, error->message);
+            gtk_alert_dialog_show(alert, GTK_WINDOW(gtk_widget_get_root(page)));
+        }
+    }
+    g_weak_ref_clear(owner);
+    g_free(owner);
+}
+
+static void select_launcher(GtkButton *button, gpointer user_data)
+{
+    GtkWidget *page = user_data;
+    Settings *state = g_object_get_data(G_OBJECT(page), "settings");
+    if (state->stopped || state->picker) return;
+    g_autoptr(GtkFileDialog) dialog = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dialog, "Select launcher");
+    gtk_file_dialog_set_accept_label(dialog, "Select");
+    gtk_file_dialog_set_modal(dialog, TRUE);
+    state->picker = g_cancellable_new();
+    gtk_widget_set_sensitive(GTK_WIDGET(button), FALSE);
+    GWeakRef *owner = g_new0(GWeakRef, 1);
+    g_weak_ref_init(owner, page);
+    gtk_file_dialog_open(dialog, GTK_WINDOW(gtk_widget_get_root(page)), state->picker, launcher_chosen, owner);
+}
+
+void settings_shutdown(GtkWidget *page)
+{
+    Settings *state = g_object_get_data(G_OBJECT(page), "settings");
+    state->stopped = TRUE;
+    if (state->picker) g_cancellable_cancel(state->picker);
+}
+
+static void free_settings(gpointer user_data)
+{
+    Settings *state = user_data;
+    if (state->picker) g_cancellable_cancel(state->picker);
+    g_clear_object(&state->picker);
+    g_free(state);
+}
 
 void settings_set_output(GtkWidget *page, gboolean enabled)
 {
@@ -88,63 +158,6 @@ static void wrap_changed(GObject *object, GParamSpec *property, gpointer user_da
     values_changed(GTK_WIDGET(object), user_data);
 }
 
-static void emit_mcp(Settings *state)
-{
-    if (state->updating || !state->mcp_changed) return;
-    McpSettings s = {
-        .port = gtk_spin_button_get_value_as_int(state->mcp_port),
-        .expose_execute = gtk_switch_get_active(state->mcp_expose_execute),
-        .expose_logs = gtk_switch_get_active(state->mcp_expose_logs),
-        .token = (char *)gtk_editable_get_text(GTK_EDITABLE(state->mcp_token)),
-    };
-    state->mcp_changed(&s, state->user_data);
-}
-
-static gboolean mcp_flush(gpointer user_data)
-{
-    Settings *state = user_data;
-    state->mcp_debounce = 0;
-    emit_mcp(state);
-    return G_SOURCE_REMOVE;
-}
-
-static void mcp_notify(Settings *state, guint delay_ms)
-{
-    if (state->updating) return;
-    if (state->mcp_debounce) g_source_remove(state->mcp_debounce);
-    state->mcp_debounce = g_timeout_add(delay_ms, mcp_flush, state);
-}
-
-static void mcp_switch_changed(GObject *object, GParamSpec *pspec, gpointer user_data)
-{
-    (void)object; (void)pspec;
-    mcp_notify(user_data, 0);
-}
-
-static void mcp_value_changed(GtkWidget *widget, gpointer user_data)
-{
-    (void)widget;
-    mcp_notify(user_data, 250);
-}
-
-static void mcp_token_changed(GtkEditable *entry, gpointer user_data)
-{
-    (void)entry;
-    mcp_notify(user_data, 400);
-}
-
-void settings_set_mcp(GtkWidget *page, const McpSettings *s)
-{
-    Settings *state = g_object_get_data(G_OBJECT(page), "settings");
-    if (!state || !s) return;
-    state->updating = TRUE;
-    gtk_spin_button_set_value(state->mcp_port, s->port);
-    gtk_switch_set_active(state->mcp_expose_execute, s->expose_execute);
-    gtk_switch_set_active(state->mcp_expose_logs, s->expose_logs);
-    gtk_editable_set_text(GTK_EDITABLE(state->mcp_token), s->token ? s->token : "");
-    state->updating = FALSE;
-}
-
 static GtkWidget *label_new(const char *text, const char *style)
 {
     GtkWidget *label = gtk_label_new(text);
@@ -193,17 +206,17 @@ static GtkWidget *section_new(GtkWidget *column, const char *title, GtkWidget **
 
 GtkWidget *settings_new(const EditorSettings *settings, SettingsChangedFunc changed,
                        RestoreTabsChangedFunc restore_callback, OutputChangedFunc output_callback,
-                       McpChangedFunc mcp_callback, gpointer user_data)
+                       LauncherChangedFunc launcher_callback, gpointer user_data)
 {
     Settings *state = g_new0(Settings, 1);
     state->changed = changed;
     state->restore_changed = restore_callback;
     state->output_changed = output_callback;
-    state->mcp_changed = mcp_callback;
+    state->launcher_changed = launcher_callback;
     state->user_data = user_data;
     GtkWidget *page = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(page), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-    g_object_set_data_full(G_OBJECT(page), "settings", state, g_free);
+    g_object_set_data_full(G_OBJECT(page), "settings", state, free_settings);
     GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
     gtk_widget_add_css_class(content, "settings-page");
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(page), content);
@@ -284,45 +297,20 @@ GtkWidget *settings_new(const EditorSettings *settings, SettingsChangedFunc chan
     add_row(output_group, "Redirect script output", "Show your scripts’ output below the editor", GTK_WIDGET(state->output));
     g_signal_connect(state->output, "notify::active", G_CALLBACK(output_changed), state);
 
-    GtkWidget *mcp_group = NULL;
-    section_new(right, "MCP server", &mcp_group);
-
-    state->mcp_port = GTK_SPIN_BUTTON(gtk_spin_button_new_with_range(1, 65535, 1));
-    gtk_widget_add_css_class(GTK_WIDGET(state->mcp_port), "mcp-port");
-    gtk_spin_button_set_numeric(state->mcp_port, TRUE);
-    gtk_spin_button_set_value(state->mcp_port, 7331);
-    gtk_editable_set_width_chars(GTK_EDITABLE(state->mcp_port), 5);
-    gtk_editable_set_alignment(GTK_EDITABLE(state->mcp_port), 0.5);
-    gtk_accessible_update_property(GTK_ACCESSIBLE(state->mcp_port),
-        GTK_ACCESSIBLE_PROPERTY_LABEL, "MCP server port", -1);
-    add_row(mcp_group, "Port", "TCP port for local MCP clients", GTK_WIDGET(state->mcp_port));
-
-    state->mcp_expose_execute = GTK_SWITCH(gtk_switch_new());
-    gtk_widget_add_css_class(GTK_WIDGET(state->mcp_expose_execute), "mcp-execute");
-    gtk_accessible_update_property(GTK_ACCESSIBLE(state->mcp_expose_execute),
-        GTK_ACCESSIBLE_PROPERTY_LABEL, "Expose execute over MCP", -1);
-    add_row(mcp_group, "Expose execute", "Let MCP clients run scripts", GTK_WIDGET(state->mcp_expose_execute));
-
-    state->mcp_expose_logs = GTK_SWITCH(gtk_switch_new());
-    gtk_widget_add_css_class(GTK_WIDGET(state->mcp_expose_logs), "mcp-logs");
-    gtk_accessible_update_property(GTK_ACCESSIBLE(state->mcp_expose_logs),
-        GTK_ACCESSIBLE_PROPERTY_LABEL, "Expose logs over MCP", -1);
-    add_row(mcp_group, "Expose logs", "Stream script output to MCP clients", GTK_WIDGET(state->mcp_expose_logs));
-
-    state->mcp_token = GTK_ENTRY(gtk_entry_new());
-    gtk_widget_add_css_class(GTK_WIDGET(state->mcp_token), "mcp-token");
-    gtk_entry_set_visibility(state->mcp_token, FALSE);
-    gtk_entry_set_input_purpose(state->mcp_token, GTK_INPUT_PURPOSE_PASSWORD);
-    gtk_entry_set_placeholder_text(state->mcp_token, "unset");
-    gtk_editable_set_width_chars(GTK_EDITABLE(state->mcp_token), 14);
-    gtk_accessible_update_property(GTK_ACCESSIBLE(state->mcp_token),
-        GTK_ACCESSIBLE_PROPERTY_LABEL, "MCP bearer token", -1);
-    add_row(mcp_group, "Bearer token", "Required in the Authorization header", GTK_WIDGET(state->mcp_token));
-
-    g_signal_connect(state->mcp_port, "value-changed", G_CALLBACK(mcp_value_changed), state);
-    g_signal_connect(state->mcp_expose_execute, "notify::active", G_CALLBACK(mcp_switch_changed), state);
-    g_signal_connect(state->mcp_expose_logs, "notify::active", G_CALLBACK(mcp_switch_changed), state);
-    g_signal_connect(state->mcp_token, "changed", G_CALLBACK(mcp_token_changed), state);
+    GtkWidget *launcher_group = NULL;
+    section_new(right, "Profiles", &launcher_group);
+    GtkWidget *launcher = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    state->launcher_button = gtk_button_new_with_label("Select…");
+    gtk_accessible_update_property(GTK_ACCESSIBLE(state->launcher_button),
+        GTK_ACCESSIBLE_PROPERTY_LABEL, "Select launcher", -1);
+    gtk_box_append(GTK_BOX(launcher), state->launcher_button);
+    state->launcher_path = GTK_LABEL(gtk_label_new("None selected"));
+    gtk_label_set_ellipsize(state->launcher_path, PANGO_ELLIPSIZE_MIDDLE);
+    gtk_label_set_max_width_chars(state->launcher_path, 16);
+    gtk_widget_add_css_class(GTK_WIDGET(state->launcher_path), "settings-description");
+    gtk_box_append(GTK_BOX(launcher), GTK_WIDGET(state->launcher_path));
+    add_row(launcher_group, "Launcher", "Executable used to launch Profiles", launcher);
+    g_signal_connect(state->launcher_button, "clicked", G_CALLBACK(select_launcher), page);
 
     return page;
 }

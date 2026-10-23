@@ -150,7 +150,7 @@ static GtkWidget *action_button(const char *label, const char *icon)
     return button;
 }
 
-GtkWidget *toolbar_new(GtkWindow *parent, const char *scripts_path,
+GtkWidget *toolbar_new(GtkWindow *parent, const char *scripts_path, GtkWidget *socket_picker,
                        const ToolbarHandlers *handlers, gpointer user_data)
 {
     Toolbar *state = g_new0(Toolbar, 1);
@@ -218,6 +218,9 @@ GtkWidget *toolbar_new(GtkWindow *parent, const char *scripts_path,
     gtk_widget_set_sensitive(state->delete_btn, FALSE);
     gtk_box_append(GTK_BOX(toolbar), state->delete_btn);
     g_signal_connect(state->delete_btn, "clicked", G_CALLBACK(delete_clicked), state);
+
+    gtk_widget_set_valign(socket_picker, GTK_ALIGN_CENTER);
+    gtk_box_append(GTK_BOX(toolbar), socket_picker);
 
     state->execute = action_button("Execute", "/org/relapse/RelapseGtk/icons/play.svg");
     gtk_widget_add_css_class(state->execute, "execute-script-button");

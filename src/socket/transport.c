@@ -350,6 +350,15 @@ gsize relapse_socket_get_max_message_bytes(const RelapseSocket *socket)
     return socket->max_message_bytes;
 }
 
+GPid relapse_socket_get_peer_pid(const RelapseSocket *socket)
+{
+    if (!socket || !socket->connection) return 0;
+    g_autoptr(GCredentials) credentials = g_socket_get_credentials(socket->connection, NULL);
+    if (!credentials) return 0;
+    GPid pid = g_credentials_get_unix_pid(credentials, NULL);
+    return MAX(0, pid);
+}
+
 RelapseSocketSendResult relapse_socket_send(RelapseSocket *socket, GBytes *message)
 {
     g_return_val_if_fail(socket != NULL && message != NULL, RELAPSE_SOCKET_SEND_CLOSED);

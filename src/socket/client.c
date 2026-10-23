@@ -156,6 +156,11 @@ gint64 socket_client_get_session(const SocketClient *client)
     return socket_client_is_ready(client) ? client->session : 0;
 }
 
+GPid socket_client_get_peer_pid(const SocketClient *client)
+{
+    return client ? relapse_socket_get_peer_pid(client->transport) : 0;
+}
+
 const char *socket_client_get_path(const SocketClient *client)
 {
     return client->path;

@@ -113,6 +113,16 @@ window.relapse-ui.fullscreen headerbar {
     opacity: 0.45;
 }
 
+.relapse-ui .execute-script-button:disabled {
+    color: #737781;
+    background-color: #24262a;
+    border-color: #35383e;
+}
+
+.relapse-ui .execute-script-button:disabled label {
+    color: #737781;
+}
+
 .relapse-ui .connection-status .status-label {
     color: var(--relapse-muted);
 }
@@ -126,6 +136,128 @@ window.relapse-ui.fullscreen headerbar {
 
 .relapse-ui .connection-status.ready .status-dot {
     background-color: #adcc92;
+}
+
+.relapse-ui dropdown > button {
+    padding: 0 10px;
+}
+
+.relapse-ui dropdown arrow {
+    min-width: 12px;
+    min-height: 12px;
+    -gtk-icon-size: 12px;
+    margin-left: 6px;
+    -gtk-icon-source: none;
+    background-image: url("resource:///org/relapse/RelapseGtk/icons/caret-down.svg");
+    background-size: 12px 12px;
+    background-repeat: no-repeat;
+    background-position: center;
+}
+
+.relapse-ui dropdown popover listview row {
+    min-height: 28px;
+    padding: 2px 8px;
+    border-radius: 3px;
+}
+
+.relapse-ui dropdown popover listview row:hover,
+.relapse-ui dropdown popover listview row:selected {
+    background-color: var(--relapse-selection);
+}
+
+.relapse-ui .profiles-list entry {
+    min-height: 28px;
+    padding: 0 8px;
+    background-color: var(--relapse-editor);
+    border: 1px solid var(--relapse-border);
+    border-radius: 3px;
+}
+
+.relapse-ui .profiles-list entry:focus-within {
+    border-color: var(--relapse-focus);
+}
+
+.relapse-ui .profiles-list entry selection {
+    background-color: var(--relapse-selection);
+}
+
+.relapse-ui .socket-picker > button {
+    min-height: 26px;
+    border-color: transparent;
+    background-color: transparent;
+}
+
+.relapse-ui .socket-picker > button:focus-visible {
+    outline-width: 1px;
+    outline-offset: 0;
+}
+
+.relapse-ui .socket-picker.empty arrow {
+    min-width: 0;
+    margin-left: 0;
+    -gtk-icon-size: 0;
+    background-image: none;
+}
+
+.relapse-ui .socket-picker popover contents {
+    min-width: 240px;
+}
+
+.relapse-ui .profile-picker {
+    padding: 8px;
+    border-top: 1px solid var(--relapse-border);
+}
+
+.relapse-ui button.profiles-button {
+    padding: 0 8px;
+    min-height: 32px;
+}
+
+.relapse-ui .profiles-content {
+    padding: 16px;
+}
+
+.relapse-ui .profiles-list {
+    background-color: var(--relapse-editor);
+    border: 1px solid var(--relapse-border);
+    border-radius: 3px;
+}
+
+.relapse-ui .profiles-list row {
+    min-height: 36px;
+    padding: 2px 8px;
+}
+
+.relapse-ui .profiles-list row:hover {
+    background-color: var(--relapse-hover);
+}
+
+.relapse-ui .profiles-list row:selected {
+    background-color: var(--relapse-selection);
+}
+
+.relapse-ui .profiles-list row:focus-visible {
+    outline: 1px solid var(--relapse-focus);
+    outline-offset: -1px;
+}
+
+.relapse-ui button.profile-action {
+    min-width: 24px;
+    min-height: 24px;
+    padding: 0;
+    border-color: transparent;
+    background-color: transparent;
+}
+
+.relapse-ui button.profile-action:disabled image {
+    opacity: 0.3;
+}
+
+.relapse-ui button.add-profile {
+    min-height: 28px;
+    border-color: transparent;
+    background-color: transparent;
+    color: var(--relapse-muted);
 }
 
 .relapse-ui button:focus-visible {
@@ -516,37 +648,37 @@ window.relapse-ui.fullscreen headerbar {
     font-weight: normal;
 }
 
-.relapse-ui notebook.script-tabs > header {
+.relapse-ui .script-tab-header {
     background-color: var(--relapse-background);
     border: 1px solid var(--relapse-border);
     border-bottom-width: 0;
 }
 
-.relapse-ui notebook.script-tabs > header tab {
+.relapse-ui .script-tab {
     min-height: 34px;
-    padding: 0 8px 0 12px;
+    padding: 0 8px 0 0;
     border-top: 2px solid transparent;
     border-right: 1px solid var(--relapse-border);
 }
 
-.relapse-ui notebook.script-tabs > header tab label {
+.relapse-ui .script-tab label {
     color: var(--relapse-muted);
 }
 
-.relapse-ui notebook.script-tabs > header tab:hover {
+.relapse-ui .script-tab:hover {
     background-color: var(--relapse-control);
 }
 
-.relapse-ui notebook.script-tabs > header tab:checked {
+.relapse-ui .script-tab.active {
     border-top-color: var(--relapse-focus);
     background-color: var(--relapse-editor);
 }
 
-.relapse-ui notebook.script-tabs > header tab:checked label {
+.relapse-ui .script-tab.active label {
     color: var(--relapse-text);
 }
 
-.relapse-ui notebook.script-tabs > header tab:focus-visible {
+.relapse-ui .script-tab:focus-visible {
     outline: 1px solid var(--relapse-focus);
     outline-offset: -3px;
 }
@@ -568,24 +700,6 @@ window.relapse-ui.fullscreen headerbar {
 .relapse-ui button.tab-close:hover,
 .relapse-ui button.tab-add:hover {
     background-color: var(--relapse-hover);
-}
-
-.relapse-ui notebook.script-tabs > header arrow {
-    min-width: 20px;
-    min-height: 16px;
-    -gtk-icon-source: url("resource:///org/relapse/RelapseGtk/icons/chevron-left.svg");
-}
-
-.relapse-ui notebook.script-tabs > header arrow.up {
-    -gtk-icon-source: url("resource:///org/relapse/RelapseGtk/icons/chevron-right.svg");
-}
-
-.relapse-ui notebook.script-tabs > header arrow:hover {
-    background-color: var(--relapse-hover);
-}
-
-.relapse-ui notebook.script-tabs > header arrow:disabled {
-    opacity: 0.3;
 }
 
 .relapse-ui label.script-message {
@@ -655,19 +769,84 @@ window.relapse-ui.fullscreen headerbar {
 }
 
 .relapse-ui .output-clear,
-.relapse-ui .output-copy,
-.relapse-ui .output-follow {
+.relapse-ui .output-copy {
     padding: 2px 7px;
     min-height: 20px;
     font-size: 11px;
 }
 
-.relapse-ui .output-text {
-    font-family: monospace;
+.relapse-ui .output-text,
+.relapse-ui .output-text text,
+.relapse-ui .output-text gutter,
+.relapse-ui .output-text gutterrenderer {
+    font-family: "DejaVu Sans Mono", monospace;
     font-size: 12px;
 }
 
-.relapse-ui .output-follow:checked {
-    background: #3a414a;
-    border-color: #666e7a;
+.relapse-ui .output-text .output-timestamps {
+    color: #737985;
+    border-right: 1px solid #2c3036;
+}
+
+/* Headers share wheel and trackpad scrolling without changing selection. */
+.relapse-ui .tab-select {
+    padding: 0 8px 0 12px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.relapse-ui .output-tab {
+    border-right: 1px solid #34373d;
+}
+
+.relapse-ui .output-source {
+    min-height: 20px;
+    padding: 2px 9px;
+    border: 0;
+    border-radius: 0;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: var(--relapse-muted);
+    box-shadow: none;
+}
+
+.relapse-ui .output-source:hover {
+    background: var(--relapse-hover);
+}
+
+.relapse-ui .output-source.active {
+    border-bottom-color: var(--relapse-focus);
+    color: var(--relapse-text);
+    background: var(--relapse-control);
+}
+
+.relapse-ui .output-tab:not(.running) label {
+    opacity: 0.6;
+}
+
+.relapse-ui .output-tab .tab-close {
+    margin: 0;
+    opacity: 0;
+}
+
+.relapse-ui .output-tab:hover .tab-close,
+.relapse-ui .output-tab:focus-within .tab-close {
+    opacity: 1;
+}
+
+.relapse-ui .output-activity {
+    opacity: 0.55;
+    min-width: 4px;
+    min-height: 4px;
+    border-radius: 50%;
+    border: 1px solid var(--relapse-muted);
+    background: transparent;
+}
+
+.relapse-ui .output-tab.running .output-activity {
+    opacity: 0.8;
+    border-color: #adc991;
+    background: #adc991;
 }

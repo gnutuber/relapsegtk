@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=RelapseGtk
+Comment=Script editor for Relapse
+Exec=relapsegtk
+Icon=org.relapse.RelapseGtk
+Terminal=false
+Categories=Development;Utility;TextEditor;

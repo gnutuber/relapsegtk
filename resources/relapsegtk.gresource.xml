@@ -2,11 +2,14 @@
 <gresources>
   <gresource prefix="/org/relapse/RelapseGtk">
     <file>style.css</file>
-    <file>scripts/output.luau</file>
+    <file>scripts/session.luau</file>
     <file>styles/relapse.xml</file>
     <file>icons/relapse.svg</file>
     <file>icons/chevron-left.svg</file>
     <file>icons/chevron-right.svg</file>
+    <file>icons/caret-down.svg</file>
+    <file>icons/rename.svg</file>
+    <file>icons/profiles.svg</file>
     <file>icons/editor.svg</file>
     <file>icons/settings.svg</file>
     <file>icons/folder-open.svg</file>

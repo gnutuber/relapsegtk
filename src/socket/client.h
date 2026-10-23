@@ -31,6 +31,7 @@ void socket_client_start(SocketClient *client);
 gboolean socket_client_is_ready(const SocketClient *client);
 gint64 socket_client_get_session(const SocketClient *client);
 const char *socket_client_get_path(const SocketClient *client);
+GPid socket_client_get_peer_pid(const SocketClient *client);
 SocketClientSendResult socket_client_execute(SocketClient *client, const char *name, const char *source,
                                              gint64 *request_id);
 void socket_client_free(SocketClient *client);

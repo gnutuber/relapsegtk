@@ -6,11 +6,14 @@
 #include "style.h"
 #include "output.h"
 #include "shader_strip.h"
+#include "profiles.h"
 
 typedef struct {
     GtkWidget *tabs;
     GtkWidget *toolbar;
     GtkWidget *output;
+    GtkWidget *profiles;
+    GtkWidget *socket_picker;
     gboolean output_enabled;
     GtkStack *views;
     GtkWidget *editor_page;
@@ -29,6 +32,58 @@ static Window *window_data(GtkWindow *window)
     return g_object_get_data(G_OBJECT(window), "window");
 }
 
+void window_set_launcher(GtkWindow *window, const char *path)
+{
+    settings_set_launcher(window_data(window)->settings_page, path);
+}
+
+void window_show_settings(GtkWindow *window)
+{
+    Window *state = window_data(window);
+    gtk_stack_set_visible_child(state->views, state->settings_page);
+}
+
+void window_set_output_target(GtkWindow *window, const char *path)
+{
+    output_set_target(window_data(window)->output, path);
+}
+
+void window_update_profiles(GtkWindow *window, const char *const *names,
+                            const char *const *sockets, const char *selected)
+{
+    Window *state = window_data(window);
+    profile_picker_update(state->profiles, names);
+    socket_picker_update(state->socket_picker, sockets, selected);
+}
+
+static gboolean launcher_changed(const char *path, GError **error, gpointer user_data)
+{
+    Window *state = window_data(user_data);
+    return !state->stopped && (!state->handlers.launcher_changed ||
+        state->handlers.launcher_changed(path, error, state->user_data));
+}
+
+static void socket_selected(const char *path, gpointer user_data)
+{
+    Window *state = window_data(user_data);
+    if (!state->stopped && state->handlers.socket_selected)
+        state->handlers.socket_selected(path, state->user_data);
+}
+
+static void launch_profile(const char *name, gpointer user_data)
+{
+    Window *state = window_data(user_data);
+    if (!state->stopped && state->handlers.launch_profile)
+        state->handlers.launch_profile(name, state->user_data);
+}
+
+static gboolean profile_running(const char *name, gpointer user_data)
+{
+    Window *state = window_data(user_data);
+    return state->stopped || (state->handlers.profile_running &&
+        state->handlers.profile_running(name, state->user_data));
+}
+
 static gboolean editor_visible(Window *window)
 {
     return !window->stopped && window->views &&
@@ -43,16 +98,16 @@ void window_set_output_enabled(GtkWindow *window, gboolean enabled)
     settings_set_output(state->settings_page, enabled);
 }
 
-void window_set_output_status(GtkWindow *window, const char *text)
+void window_set_output_status(GtkWindow *window, const char *path, const char *text, gboolean active)
 {
-    output_set_status(window_data(window)->output, text);
+    output_set_status(window_data(window)->output, path, text, active);
 }
 
-void window_append_output(GtkWindow *window, const char *level, const char *text)
+void window_append_output(GtkWindow *window, const char *path, const char *level, const char *text)
 {
     Window *state = window_data(window);
     if (state->output_enabled)
-        output_append(state->output, level, text);
+        output_append(state->output, path, level, text);
 }
 
 static void output_changed(gboolean enabled, gpointer user_data)
@@ -119,26 +174,6 @@ static void restore_tabs_changed(gboolean enabled, gpointer user_data)
     if (state->handlers.restore_tabs_changed &&
         !state->handlers.restore_tabs_changed(enabled, &error, state->user_data)) {
         g_autoptr(GtkAlertDialog) alert = gtk_alert_dialog_new("Could not save settings");
-        gtk_alert_dialog_set_detail(alert, error ? error->message : "Changes will apply for this session only.");
-        gtk_alert_dialog_show(alert, window);
-    }
-}
-
-void window_set_mcp_settings(GtkWindow *window, const McpSettings *settings)
-{
-    Window *state = window_data(window);
-    settings_set_mcp(state->settings_page, settings);
-}
-
-static void mcp_settings_changed(const McpSettings *settings, gpointer user_data)
-{
-    GtkWindow *window = user_data;
-    Window *state = window_data(window);
-    if (state->stopped) return;
-    g_autoptr(GError) error = NULL;
-    if (state->handlers.mcp_changed &&
-        !state->handlers.mcp_changed(settings, &error, state->user_data)) {
-        g_autoptr(GtkAlertDialog) alert = gtk_alert_dialog_new("Could not apply MCP settings");
         gtk_alert_dialog_set_detail(alert, error ? error->message : "Changes will apply for this session only.");
         gtk_alert_dialog_show(alert, window);
     }
@@ -335,6 +370,14 @@ static void window_destroyed(GtkWidget *widget, gpointer user_data)
     (void)widget;
     Window *window = user_data;
     window->stopped = TRUE;
+    if (window->profiles) {
+        profile_picker_shutdown(window->profiles);
+        window->profiles = NULL;
+    }
+    if (window->settings_page) {
+        settings_shutdown(window->settings_page);
+        window->settings_page = NULL;
+    }
     if (window->toolbar) {
         toolbar_shutdown(window->toolbar);
         window->toolbar = NULL;
@@ -419,7 +462,7 @@ GtkWindow *window_new(GtkApplication *application, const char *scripts_path,
     g_object_set_data_full(G_OBJECT(window), "window", state, free_window);
     g_signal_connect(window, "destroy", G_CALLBACK(window_destroyed), state);
     gtk_window_set_default_size(window, 860, 480);
-    gtk_window_set_title(window, "Relapse UI");
+    gtk_window_set_title(window, "relapsegtk");
     gtk_window_set_titlebar(window, create_titlebar(window));
 
     state->save = g_simple_action_new("save", NULL);
@@ -466,10 +509,17 @@ GtkWindow *window_new(GtkApplication *application, const char *scripts_path,
         .save_active   = save_active_requested,
         .delete_active = delete_active_requested,
     };
-    state->toolbar = toolbar_new(window, scripts_path, &toolbar_handlers, state);
+    state->socket_picker = socket_picker_new(socket_selected, window);
+    state->toolbar = toolbar_new(window, scripts_path, state->socket_picker, &toolbar_handlers, state);
     gtk_box_append(GTK_BOX(box), state->toolbar);
     GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_paned_set_start_child(GTK_PANED(paned), scripts_new(scripts_path, script_selected, script_renamed, state));
+    GtkWidget *sidebar = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    state->profiles = profile_picker_new(launch_profile, profile_running, window);
+    GtkWidget *scripts = scripts_new(scripts_path, script_selected, script_renamed, state);
+    gtk_widget_set_vexpand(scripts, TRUE);
+    gtk_box_append(GTK_BOX(sidebar), scripts);
+    gtk_box_append(GTK_BOX(sidebar), state->profiles);
+    gtk_paned_set_start_child(GTK_PANED(paned), sidebar);
     gtk_paned_set_end_child(GTK_PANED(paned), box);
     gtk_paned_set_resize_start_child(GTK_PANED(paned), FALSE);
     gtk_paned_set_shrink_start_child(GTK_PANED(paned), FALSE);
@@ -482,7 +532,7 @@ GtkWindow *window_new(GtkApplication *application, const char *scripts_path,
     gtk_stack_add_titled(state->views, paned, "editor", "Editor");
     EditorSettings defaults = editor_settings_defaults();
     state->settings_page = settings_new(&defaults, editor_settings_changed, restore_tabs_changed,
-                                        output_changed, mcp_settings_changed, window);
+                                        output_changed, launcher_changed, window);
     gtk_stack_add_titled(state->views, state->settings_page, "settings", "Settings");
     window_set_editor_settings(window, &defaults);
 
