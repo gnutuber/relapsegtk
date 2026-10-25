@@ -4,8 +4,10 @@
 #include "settings/editor.h"
 
 typedef void (*TabsChangedFunc)(GtkWidget *tabs, gpointer user_data);
+typedef void (*TabOpenFunc)(GFile *file, const char *display_name, gpointer user_data);
 
-GtkWidget *tabs_new(const char *scripts_path, TabsChangedFunc changed, gpointer user_data);
+GtkWidget *tabs_new(const char *scripts_path, TabsChangedFunc changed, TabOpenFunc open,
+                    gpointer user_data);
 void tabs_open(GtkWidget *tabs, GFile *file, const char *display_name);
 GFile *tabs_rename(GtkWidget *tabs, GFile *file, const char *name, GError **error);
 void tabs_save(GtkWidget *tabs);

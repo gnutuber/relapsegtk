@@ -63,6 +63,7 @@ schema_dir="$(pkg-config --variable=schemasdir gio-2.0)"
 pixbuf_modules="$(pkg-config --variable=gdk_pixbuf_moduledir gdk-pixbuf-2.0)"
 pixbuf_query="$(pkg-config --variable=gdk_pixbuf_query_loaders gdk-pixbuf-2.0)"
 svg_loader="$pixbuf_modules/libpixbufloader_svg.so"
+[[ -f "$svg_loader" ]] || svg_loader="$pixbuf_modules/libpixbufloader-svg.so"
 [[ -f "$svg_loader" && -x "$pixbuf_query" ]] || {
     echo 'Install the librsvg GdkPixbuf loader and gdk-pixbuf-query-loaders to package SVG icons.' >&2
     exit 1

@@ -29,7 +29,10 @@ struct Output {
     GtkWidget *empty;
     GHashTable *sources;
     Source *selected;
+    Source *merged;
     GtkAdjustment *scroll;
+    GtkWidget *jump;
+    gboolean all_selected;
     gboolean adjusting;
     guint scroll_idle;
 };
@@ -73,6 +76,14 @@ static void size_timestamps(GtkWidget *renderer, gpointer data)
     gtk_widget_set_size_request(renderer, width + 20, -1);
 }
 
+static void update_jump(Output *output)
+{
+    gboolean more = output->scroll &&
+        gtk_adjustment_get_upper(output->scroll) - gtk_adjustment_get_page_size(output->scroll) > 2;
+    gtk_widget_set_visible(output->jump,
+        output->selected && !output->selected->follow && more);
+}
+
 static gboolean scroll_to_position(gpointer data)
 {
     Output *output = data;
@@ -83,6 +94,7 @@ static gboolean scroll_to_position(gpointer data)
     double bottom = MAX(0, gtk_adjustment_get_upper(scroll) - gtk_adjustment_get_page_size(scroll));
     gtk_adjustment_set_value(scroll, output->selected->follow ? bottom : MIN(bottom, output->selected->position));
     output->adjusting = FALSE;
+    update_jump(output);
     return G_SOURCE_REMOVE;
 }
 
@@ -108,6 +120,7 @@ static gboolean scroll_input(GtkEventControllerScroll *controller, double dx, do
         output->selected->position = gtk_adjustment_get_value(output->scroll);
         if (output->scroll_idle) g_source_remove(output->scroll_idle);
         output->scroll_idle = 0;
+        update_jump(output);
     }
     return FALSE;
 }
@@ -120,19 +133,58 @@ static void position_changed(GtkAdjustment *scroll, gpointer data)
     source->position = gtk_adjustment_get_value(scroll);
     double bottom = gtk_adjustment_get_upper(scroll) - gtk_adjustment_get_page_size(scroll);
     source->follow = source->position >= bottom - 2;
+    update_jump(output);
+}
+
+static void apply_highlights(Output *output)
+{
+    GHashTableIter iter;
+    gpointer value;
+    g_hash_table_iter_init(&iter, output->sources);
+    while (g_hash_table_iter_next(&iter, NULL, &value)) {
+        Source *source = value;
+        gboolean active = source == output->selected ||
+            (output->all_selected && source != output->merged);
+        if (active) gtk_widget_add_css_class(source->select, "active");
+        else gtk_widget_remove_css_class(source->select, "active");
+    }
+}
+
+static guint source_count(Output *output)
+{
+    guint count = 0;
+    GHashTableIter iter;
+    gpointer value;
+    g_hash_table_iter_init(&iter, output->sources);
+    while (g_hash_table_iter_next(&iter, NULL, &value))
+        if (value != output->merged) ++count;
+    return count;
+}
+
+static void update_tab_visibility(Output *output)
+{
+    GHashTableIter iter;
+    gpointer value;
+    g_hash_table_iter_init(&iter, output->sources);
+    while (g_hash_table_iter_next(&iter, NULL, &value)) {
+        Source *source = value;
+        gboolean visible = source == output->merged ? output->all_selected : !output->all_selected;
+        gtk_widget_set_visible(source->tab, visible);
+    }
 }
 
 static void select_source(Source *source)
 {
     Output *output = source->output;
     if (output->selected == source) return;
-    if (output->selected) gtk_widget_remove_css_class(output->selected->select, "active");
     output->selected = source;
-    gtk_widget_add_css_class(source->select, "active");
+    apply_highlights(output);
     output->adjusting = TRUE;
     gtk_text_view_set_buffer(output->view, source->buffer);
     output->adjusting = FALSE;
     scroll_changed(output->scroll, output);
+    update_jump(output);
+    update_tab_visibility(output);
     tab_strip_reveal(output->tabs, source->tab);
 }
 
@@ -146,8 +198,8 @@ static void close_source(GtkButton *button, gpointer data)
 {
     (void)button;
     Source *source = data;
-    if (source->active) return;
     Output *output = source->output;
+    if (source->active || source == output->merged) return;
     if (output->selected == source) {
         GtkWidget *next = gtk_widget_get_next_sibling(source->tab);
         if (!next) next = gtk_widget_get_prev_sibling(source->tab);
@@ -157,7 +209,14 @@ static void close_source(GtkButton *button, gpointer data)
     }
     gtk_box_remove(tab_strip_content(output->tabs), source->tab);
     g_hash_table_remove(output->sources, source->path);
-    gtk_widget_set_visible(output->empty, g_hash_table_size(output->sources) == 0);
+    gtk_widget_set_visible(output->empty, source_count(output) == 0);
+    update_tab_visibility(output);
+    if (!output->selected) {
+        GHashTableIter iter;
+        gpointer value;
+        g_hash_table_iter_init(&iter, output->sources);
+        if (g_hash_table_iter_next(&iter, NULL, &value)) select_source(value);
+    }
 }
 
 static Source *ensure_source(Output *output, const char *path)
@@ -176,11 +235,12 @@ static Source *ensure_source(Output *output, const char *path)
     gtk_text_buffer_create_tag(source->buffer, "info", "foreground", "#94b9e3", NULL);
     gtk_text_buffer_create_tag(source->buffer, "warn", "foreground", "#e3bd7a", NULL);
     gtk_text_buffer_create_tag(source->buffer, "error", "foreground", "#e28b8b", NULL);
+    gboolean merged = !*path;
     source->tab = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_widget_add_css_class(source->tab, "output-tab");
-    gtk_widget_add_css_class(source->tab, "running");
+    if (!merged) gtk_widget_add_css_class(source->tab, "running");
     g_object_set_data(G_OBJECT(source->tab), "source", source);
-    g_autofree char *name = profile_socket_name(path);
+    g_autofree char *name = merged ? g_strdup("All") : profile_socket_name(path);
     source->select = gtk_button_new();
     gtk_widget_add_css_class(source->select, "output-source");
     GtkWidget *content = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
@@ -203,16 +263,29 @@ static Source *ensure_source(Output *output, const char *path)
     g_signal_connect(source->close, "clicked", G_CALLBACK(close_source), source);
     gtk_box_append(GTK_BOX(source->tab), source->close);
     g_hash_table_insert(output->sources, source->path, source);
-    gtk_box_append(tab_strip_content(output->tabs), source->tab);
-    gtk_widget_set_visible(output->empty, FALSE);
-    if (!output->selected) select_source(source);
+    if (merged) {
+        output->merged = source;
+        gtk_widget_add_css_class(source->tab, "running");
+        gtk_box_prepend(tab_strip_content(output->tabs), source->tab);
+        gtk_widget_set_tooltip_text(source->select, "Combined output from every instance");
+    } else {
+        gtk_box_append(tab_strip_content(output->tabs), source->tab);
+        gtk_widget_set_visible(output->empty, FALSE);
+        if (!output->selected) select_source(source);
+    }
+    update_tab_visibility(output);
     return source;
 }
 
 void output_set_target(GtkWidget *pane, const char *path)
 {
     Output *output = g_object_get_data(G_OBJECT(pane), "output");
-    if (path) select_source(ensure_source(output, path));
+    const char *target = path ? path : "";
+    output->all_selected = !*target;
+    Source *source = ensure_source(output, target);
+    if (output->selected != source) select_source(source);
+    apply_highlights(output);
+    update_tab_visibility(output);
 }
 
 void output_set_status(GtkWidget *pane, const char *path, const char *text, gboolean active)
@@ -225,6 +298,18 @@ void output_set_status(GtkWidget *pane, const char *path, const char *text, gboo
     gtk_widget_set_visible(source->close, !active);
     if (active) gtk_widget_add_css_class(source->tab, "running");
     else gtk_widget_remove_css_class(source->tab, "running");
+}
+
+static void jump_to_latest(GtkButton *button, gpointer data)
+{
+    (void)button;
+    Output *output = data;
+    if (!output->selected) return;
+    output->selected->follow = TRUE;
+    if (output->scroll_idle) g_source_remove(output->scroll_idle);
+    output->scroll_idle = 0;
+    scroll_to_position(output);
+    update_jump(output);
 }
 
 static void clear_output(GtkButton *button, gpointer data)
@@ -247,10 +332,26 @@ static void copy_output(GtkButton *button, gpointer data)
     if (*text) gdk_clipboard_set_text(gtk_widget_get_clipboard(GTK_WIDGET(button)), text);
 }
 
+static void append_line(Output *output, Source *source, const char *level, const char *text);
+
 void output_append(GtkWidget *pane, const char *path, const char *level, const char *text)
 {
     Output *output = g_object_get_data(G_OBJECT(pane), "output");
     Source *source = ensure_source(output, path);
+    append_line(output, source, level, text);
+    Source *merged = ensure_source(output, "");
+    if (source_count(output) > 1) {
+        g_autofree char *name = profile_socket_name(path);
+        g_autofree char *tagged = g_strdup_printf("[%s] %s", name, text);
+        append_line(output, merged, level, tagged);
+    } else {
+        append_line(output, merged, level, text);
+    }
+    update_tab_visibility(output);
+}
+
+static void append_line(Output *output, Source *source, const char *level, const char *text)
+{
     GtkTextBuffer *buffer = source->buffer;
     if (source == output->selected && source->follow) queue_scroll(output);
     g_autofree char *valid = g_utf8_make_valid(text, -1);
@@ -317,11 +418,14 @@ GtkWidget *output_new(void)
     g_signal_connect(clear, "clicked", G_CALLBACK(clear_output), output);
     gtk_box_append(GTK_BOX(header), clear);
     gtk_box_append(GTK_BOX(pane), header);
+    GtkWidget *overlay = gtk_overlay_new();
+    gtk_widget_set_vexpand(overlay, TRUE);
+    gtk_box_append(GTK_BOX(pane), overlay);
     GtkWidget *scroll = gtk_scrolled_window_new();
     gtk_widget_set_vexpand(scroll, TRUE);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
     gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroll), 48);
-    gtk_box_append(GTK_BOX(pane), scroll);
+    gtk_overlay_set_child(GTK_OVERLAY(overlay), scroll);
     output->view = GTK_TEXT_VIEW(gtk_source_view_new());
     output->gutter = gtk_source_gutter_renderer_text_new();
     gtk_widget_add_css_class(GTK_WIDGET(output->gutter), "output-timestamps");
@@ -353,5 +457,21 @@ GtkWidget *output_new(void)
     output->scroll = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroll));
     g_signal_connect(output->scroll, "changed", G_CALLBACK(scroll_changed), output);
     g_signal_connect(output->scroll, "value-changed", G_CALLBACK(position_changed), output);
+
+    output->jump = gtk_button_new();
+    gtk_widget_add_css_class(output->jump, "output-jump");
+    gtk_widget_set_tooltip_text(output->jump, "Jump to the latest line");
+    gtk_accessible_update_property(GTK_ACCESSIBLE(output->jump),
+        GTK_ACCESSIBLE_PROPERTY_LABEL, "Jump to the latest line", -1);
+    GtkWidget *jump_icon = gtk_image_new_from_resource("/org/relapse/RelapseGtk/icons/caret-down.svg");
+    gtk_image_set_pixel_size(GTK_IMAGE(jump_icon), 14);
+    gtk_button_set_child(GTK_BUTTON(output->jump), jump_icon);
+    gtk_widget_set_halign(output->jump, GTK_ALIGN_END);
+    gtk_widget_set_valign(output->jump, GTK_ALIGN_END);
+    gtk_widget_set_margin_end(output->jump, 14);
+    gtk_widget_set_margin_bottom(output->jump, 10);
+    gtk_widget_set_visible(output->jump, FALSE);
+    g_signal_connect(output->jump, "clicked", G_CALLBACK(jump_to_latest), output);
+    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), output->jump);
     return pane;
 }

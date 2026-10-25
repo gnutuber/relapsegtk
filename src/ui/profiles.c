@@ -34,6 +34,7 @@ struct ProfileRow {
     GtkEntry *entry;
     GtkWidget *play;
     GtkWidget *rename;
+    GtkWidget *remove;
     GtkWidget *save;
     GtkWidget *cancel;
     char *name;
@@ -74,13 +75,37 @@ static GtkDropDown *dropdown_new(const char *label)
     return dropdown;
 }
 
+typedef struct {
+    GWeakRef picker;
+    char *path;
+} SocketChoice;
+
+static gboolean emit_socket_choice(gpointer user_data)
+{
+    SocketChoice *choice = user_data;
+    g_autoptr(GtkWidget) picker = g_weak_ref_get(&choice->picker);
+    if (picker) {
+        SocketPicker *state = g_object_get_data(G_OBJECT(picker), "socket-picker");
+        if (state && state->selected)
+            state->selected(choice->path, state->user_data);
+    }
+    g_weak_ref_clear(&choice->picker);
+    g_free(choice->path);
+    g_free(choice);
+    return G_SOURCE_REMOVE;
+}
+
 static void socket_selected(GObject *object, GParamSpec *property, gpointer user_data)
 {
     (void)object; (void)property;
     SocketPicker *state = user_data;
     guint selected = gtk_drop_down_get_selected(state->dropdown);
-    if (!state->updating && state->selected && state->paths && selected < g_strv_length(state->paths))
-        state->selected(state->paths[selected], state->user_data);
+    if (state->updating || !state->selected || !state->paths || selected >= g_strv_length(state->paths))
+        return;
+    SocketChoice *choice = g_new0(SocketChoice, 1);
+    g_weak_ref_init(&choice->picker, state->dropdown);
+    choice->path = g_strdup(state->paths[selected]);
+    g_idle_add(emit_socket_choice, choice);
 }
 
 static void free_socket_picker(gpointer user_data)
@@ -107,6 +132,7 @@ void socket_picker_update(GtkWidget *picker, const char *const *paths, const cha
 {
     SocketPicker *state = g_object_get_data(G_OBJECT(picker), "socket-picker");
     g_autoptr(GPtrArray) items = g_ptr_array_new_with_free_func(g_free);
+    if (paths[0]) g_ptr_array_add(items, g_strdup(""));
     for (guint i = 0; paths[i]; ++i) g_ptr_array_add(items, g_strdup(paths[i]));
     if (paths[0] && selected && !g_strv_contains(paths, selected)) g_ptr_array_add(items, g_strdup(selected));
     g_ptr_array_add(items, NULL);
@@ -119,6 +145,10 @@ void socket_picker_update(GtkWidget *picker, const char *const *paths, const cha
         g_autoptr(GtkStringList) model = gtk_string_list_new(NULL);
         if (!next[0]) gtk_string_list_append(model, "No Instances");
         for (guint i = 0; next[i]; ++i) {
+            if (!*next[i]) {
+                gtk_string_list_append(model, "All");
+                continue;
+            }
             g_autofree char *profile = profile_socket_name(next[i]);
             gtk_string_list_append(model, profile);
         }
@@ -164,13 +194,16 @@ static void update_row(ProfileRow *row)
     gboolean editing = row->picker->editing == row;
     gtk_widget_set_sensitive(row->play, !running && !row->picker->editing);
     gtk_widget_set_sensitive(row->rename, !running && !row->picker->editing);
+    gtk_widget_set_sensitive(row->remove, !running && !row->picker->editing);
     gtk_widget_set_sensitive(row->save, !running);
     gtk_widget_set_visible(row->play, !editing);
     gtk_widget_set_visible(row->rename, !editing);
+    gtk_widget_set_visible(row->remove, !editing);
     gtk_widget_set_visible(row->save, editing);
     gtk_widget_set_visible(row->cancel, editing);
     gtk_widget_set_tooltip_text(row->play, running ? "Profile is running" : "Launch Profile");
     gtk_widget_set_tooltip_text(row->rename, running ? "Close this Profile to rename it" : "Rename Profile");
+    gtk_widget_set_tooltip_text(row->remove, running ? "Close this Profile to delete it" : "Delete Profile");
 }
 
 static void update_rows(ProfilePicker *state)
@@ -239,6 +272,52 @@ static void begin_edit(GtkWidget *widget, gpointer user_data)
     gtk_editable_select_region(GTK_EDITABLE(row->entry), 0, -1);
 }
 
+typedef struct {
+    GWeakRef picker;
+    char *name;
+} DeleteRequest;
+
+static void delete_finished(GObject *dialog, GAsyncResult *result, gpointer user_data)
+{
+    DeleteRequest *request = user_data;
+    int choice = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(dialog), result, NULL);
+    g_autoptr(GtkWidget) picker = g_weak_ref_get(&request->picker);
+    ProfilePicker *state = picker ? g_object_get_data(G_OBJECT(picker), "profile-picker") : NULL;
+    if (state && choice == 1) {
+        g_autoptr(GError) error = NULL;
+        if (!profile_delete(request->name, &error))
+            show_error(state, error->message);
+        else {
+            show_error(state, NULL);
+            state->editing = NULL;
+            refresh_rows(state);
+        }
+    }
+    if (state) update_rows(state);
+    g_weak_ref_clear(&request->picker);
+    g_free(request->name);
+    g_free(request);
+}
+
+static void delete_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    ProfileRow *row = user_data;
+    ProfilePicker *state = row->picker;
+    if (!row->name || row_running(row) || state->editing)
+        return;
+    g_autoptr(GtkAlertDialog) alert = gtk_alert_dialog_new("Delete Profile %s?", row->name);
+    gtk_alert_dialog_set_detail(alert, "This removes the Profile and its scripts from disk.");
+    const char *buttons[] = {"Cancel", "Delete", NULL};
+    gtk_alert_dialog_set_buttons(alert, buttons);
+    gtk_alert_dialog_set_cancel_button(alert, 0);
+    gtk_alert_dialog_set_default_button(alert, 0);
+    DeleteRequest *request = g_new0(DeleteRequest, 1);
+    g_weak_ref_init(&request->picker, state->widget);
+    request->name = g_strdup(row->name);
+    gtk_alert_dialog_choose(alert, state->dialog, NULL, delete_finished, request);
+}
+
 static void launch_clicked(GtkButton *button, gpointer user_data)
 {
     (void)button;
@@ -300,17 +379,19 @@ static ProfileRow *row_new(ProfilePicker *state, const char *name)
     gtk_stack_add_child(row->name_stack, GTK_WIDGET(row->entry));
     gtk_box_append(GTK_BOX(box), GTK_WIDGET(row->name_stack));
     row->play = row_button("Launch Profile", "/org/relapse/RelapseGtk/icons/play.svg", "launch-profile");
-    row->rename = row_button("Rename Profile", "/org/relapse/RelapseGtk/icons/rename.svg", "rename-profile");
+    row->rename = row_button("Rename Profile", "/org/relapse/RelapseGtk/icons/rename.png", "rename-profile");
+    row->remove = row_button("Delete Profile", "/org/relapse/RelapseGtk/icons/delete.svg", "delete-profile");
     row->save = row_button("✓", NULL, "save-profile");
     row->cancel = row_button("×", NULL, "cancel-profile");
     gtk_widget_set_tooltip_text(row->save, "Save Profile name (Enter)");
     gtk_widget_set_tooltip_text(row->cancel, "Cancel (Escape)");
     gtk_accessible_update_property(GTK_ACCESSIBLE(row->save), GTK_ACCESSIBLE_PROPERTY_LABEL, "Save Profile name", -1);
     gtk_accessible_update_property(GTK_ACCESSIBLE(row->cancel), GTK_ACCESSIBLE_PROPERTY_LABEL, "Cancel name edit", -1);
-    GtkWidget *buttons[] = {row->play, row->rename, row->save, row->cancel};
+    GtkWidget *buttons[] = {row->play, row->rename, row->remove, row->save, row->cancel};
     for (guint i = 0; i < G_N_ELEMENTS(buttons); ++i) gtk_box_append(GTK_BOX(box), buttons[i]);
     g_signal_connect(row->play, "clicked", G_CALLBACK(launch_clicked), row);
     g_signal_connect(row->rename, "clicked", G_CALLBACK(begin_edit), row);
+    g_signal_connect(row->remove, "clicked", G_CALLBACK(delete_clicked), row);
     g_signal_connect(row->save, "clicked", G_CALLBACK(save_name), row);
     g_signal_connect(row->entry, "activate", G_CALLBACK(save_name), row);
     g_signal_connect(row->cancel, "clicked", G_CALLBACK(cancel_edit), row);
@@ -462,8 +543,8 @@ GtkWidget *profile_picker_new(ProfileLaunchFunc launch, ProfileRunningFunc runni
     gtk_widget_set_hexpand(label, TRUE);
     gtk_label_set_xalign(GTK_LABEL(label), 0);
     gtk_box_append(GTK_BOX(content), label);
-    GtkWidget *icon = gtk_image_new_from_resource("/org/relapse/RelapseGtk/icons/profiles.svg");
-    gtk_image_set_pixel_size(GTK_IMAGE(icon), 16);
+    GtkWidget *icon = gtk_image_new_from_resource("/org/relapse/RelapseGtk/icons/profiles.png");
+    gtk_image_set_pixel_size(GTK_IMAGE(icon), 31);
     gtk_box_append(GTK_BOX(content), icon);
     gtk_button_set_child(GTK_BUTTON(button), content);
     gtk_box_append(GTK_BOX(box), button);

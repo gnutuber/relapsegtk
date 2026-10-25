@@ -93,6 +93,60 @@ gboolean profile_rename(const char *name, const char *replacement, GError **erro
     return FALSE;
 }
 
+static gboolean remove_tree(const char *path, GError **error)
+{
+    struct stat info;
+    if (g_lstat(path, &info) != 0) {
+        int failure = errno;
+        g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(failure),
+            "Could not delete Profile file: %s", g_strerror(failure));
+        return FALSE;
+    }
+    if (!S_ISDIR(info.st_mode)) {
+        if (g_unlink(path) != 0) {
+            int failure = errno;
+            g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(failure),
+                "Could not delete Profile file: %s", g_strerror(failure));
+            return FALSE;
+        }
+        return TRUE;
+    }
+    if ((info.st_mode & S_IRWXU) != S_IRWXU)
+        g_chmod(path, 0700);
+    g_autoptr(GDir) dir = g_dir_open(path, 0, error);
+    if (!dir)
+        return FALSE;
+    const char *name;
+    while ((name = g_dir_read_name(dir))) {
+        g_autofree char *child = g_build_filename(path, name, NULL);
+        if (!remove_tree(child, error))
+            return FALSE;
+    }
+    if (g_rmdir(path) != 0) {
+        int failure = errno;
+        g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(failure),
+            "Could not delete Profile: %s", g_strerror(failure));
+        return FALSE;
+    }
+    return TRUE;
+}
+
+gboolean profile_delete(const char *name, GError **error)
+{
+    if (!profile_name_valid(name)) {
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid Profile name.");
+        return FALSE;
+    }
+    g_autofree char *directory = profiles_directory();
+    g_autofree char *path = g_build_filename(directory, name, NULL);
+    struct stat info;
+    if (g_lstat(path, &info) != 0 || !S_ISDIR(info.st_mode)) {
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "This Profile no longer exists.");
+        return FALSE;
+    }
+    return remove_tree(path, error);
+}
+
 static gint compare_names(gconstpointer a, gconstpointer b)
 {
     return g_strcmp0(*(char *const *)a, *(char *const *)b);

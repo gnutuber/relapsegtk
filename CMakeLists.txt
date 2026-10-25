@@ -7,12 +7,12 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4>=4.16)
-pkg_check_modules(GTKSOURCE REQUIRED IMPORTED_TARGET gtksourceview-5>=5.16)
+pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4>=4.14)
+pkg_check_modules(GTKSOURCE REQUIRED IMPORTED_TARGET gtksourceview-5>=5.12)
 pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-unix-2.0)
 pkg_check_modules(JSON_GLIB REQUIRED IMPORTED_TARGET json-glib-1.0)
 
-add_library(relapse-settings STATIC src/settings/editor.c src/settings/session.c src/settings/output.c src/settings/store.c src/settings/launcher.c)
+add_library(relapse-settings STATIC src/settings/editor.c src/settings/session.c src/settings/output.c src/settings/store.c src/settings/launcher.c src/settings/opener.c)
 target_compile_features(relapse-settings PUBLIC c_std_11)
 target_include_directories(relapse-settings PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(relapse-settings PUBLIC PkgConfig::GIO)
@@ -35,6 +35,11 @@ target_link_libraries(relapse-socket PUBLIC PkgConfig::GIO PRIVATE PkgConfig::JS
 add_library(relapse-bridge STATIC src/socket/bridge.c)
 target_compile_features(relapse-bridge PUBLIC c_std_11)
 target_link_libraries(relapse-bridge PUBLIC relapse-socket PRIVATE PkgConfig::JSON_GLIB)
+
+add_library(relapse-update STATIC src/update/check.c)
+target_compile_features(relapse-update PUBLIC c_std_11)
+target_include_directories(relapse-update PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(relapse-update PUBLIC PkgConfig::GIO PRIVATE PkgConfig::JSON_GLIB)
 
 add_library(relapse-sessions STATIC src/socket/sessions.c)
 target_compile_features(relapse-sessions PUBLIC c_std_11)
@@ -61,10 +66,10 @@ add_custom_command(
     DEPENDS resources/relapsegtk.gresource.xml resources/style.css resources/styles/relapse.xml
         resources/icons/relapse.svg
         resources/icons/chevron-left.svg resources/icons/chevron-right.svg
-        resources/icons/caret-down.svg resources/icons/rename.svg resources/icons/profiles.svg
-        resources/icons/editor.svg resources/icons/settings.svg
+        resources/icons/caret-down.svg resources/icons/rename.png resources/icons/profiles.png
+        resources/icons/editor.png resources/icons/settings.png
         resources/icons/folder-open.svg resources/icons/play.svg
-        resources/icons/save.svg resources/icons/delete.svg
+        resources/icons/save.svg resources/icons/delete.svg resources/icons/discord.png
         resources/scripts/session.luau
     VERBATIM)
 
@@ -73,4 +78,4 @@ target_link_libraries(relapse-resources PRIVATE PkgConfig::GIO)
 
 add_executable(relapsegtk src/main.c src/app.c)
 target_compile_features(relapsegtk PRIVATE c_std_11)
-target_link_libraries(relapsegtk PRIVATE relapse-ui relapse-sessions relapse-resources)
+target_link_libraries(relapsegtk PRIVATE relapse-ui relapse-sessions relapse-update relapse-resources)

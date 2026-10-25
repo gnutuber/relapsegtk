@@ -14,7 +14,15 @@ relapse_runtime_dir="$(mktemp -d "${TMPDIR:-/tmp}/relapsegtk-appimage.XXXXXX")"
 trap 'rm -rf -- "$relapse_runtime_dir"' EXIT
 export GDK_PIXBUF_MODULE_FILE="$relapse_runtime_dir/loaders.cache"
 export GDK_PIXBUF_MODULEDIR="$APPDIR/usr/lib"
-"$APPDIR/usr/bin/gdk-pixbuf-query-loaders" "$APPDIR/usr/lib/libpixbufloader_svg.so" > "$GDK_PIXBUF_MODULE_FILE"
+svg_loader=""
+for candidate in "$APPDIR/usr/lib/libpixbufloader_svg.so" "$APPDIR/usr/lib/libpixbufloader-svg.so"; do
+    if [[ -f "$candidate" ]]; then
+        svg_loader="$candidate"
+        break
+    fi
+done
+[[ -n "$svg_loader" ]] || { echo "The bundled SVG loader is missing." >&2; exit 1; }
+"$APPDIR/usr/bin/gdk-pixbuf-query-loaders" "$svg_loader" > "$GDK_PIXBUF_MODULE_FILE"
 
 "$APPDIR/usr/bin/relapsegtk" "$@" &
 relapse_pid=$!

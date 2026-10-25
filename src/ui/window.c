@@ -4,6 +4,7 @@
 #include "tabs.h"
 #include "toolbar.h"
 #include "style.h"
+#include "update/check.h"
 #include "output.h"
 #include "shader_strip.h"
 #include "profiles.h"
@@ -37,6 +38,11 @@ void window_set_launcher(GtkWindow *window, const char *path)
     settings_set_launcher(window_data(window)->settings_page, path);
 }
 
+void window_set_open_with(GtkWindow *window, OpenerMode mode, const char *command)
+{
+    settings_set_open_with(window_data(window)->settings_page, mode, command);
+}
+
 void window_show_settings(GtkWindow *window)
 {
     Window *state = window_data(window);
@@ -61,6 +67,20 @@ static gboolean launcher_changed(const char *path, GError **error, gpointer user
     Window *state = window_data(user_data);
     return !state->stopped && (!state->handlers.launcher_changed ||
         state->handlers.launcher_changed(path, error, state->user_data));
+}
+
+static void check_updates_requested(gpointer user_data)
+{
+    Window *state = window_data(user_data);
+    if (!state->stopped && state->handlers.check_updates)
+        state->handlers.check_updates(state->user_data);
+}
+
+static gboolean open_with_changed(OpenerMode mode, const char *command, GError **error, gpointer user_data)
+{
+    Window *state = window_data(user_data);
+    return !state->stopped && (!state->handlers.open_with_changed ||
+        state->handlers.open_with_changed(mode, command, error, state->user_data));
 }
 
 static void socket_selected(const char *path, gpointer user_data)
@@ -221,6 +241,13 @@ static void script_selected(GFile *file, const char *display_name, gpointer user
         window->handlers.open_script(file, display_name, window->user_data);
 }
 
+static void tab_open_requested(GFile *file, const char *display_name, gpointer user_data)
+{
+    Window *window = user_data;
+    if (!window->stopped && window->handlers.tab_open)
+        window->handlers.tab_open(file, display_name, window->user_data);
+}
+
 static GFile *script_renamed(GFile *file, const char *name, GError **error, gpointer user_data)
 {
     Window *window = user_data;
@@ -345,20 +372,43 @@ static GtkToggleButton *navigation_button(const char *label, const char *view,
     return GTK_TOGGLE_BUTTON(button);
 }
 
+static void open_discord(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    GtkWindow *window = user_data;
+    g_autoptr(GError) error = NULL;
+    if (!g_app_info_launch_default_for_uri("https://discord.gg/getrelapse", NULL, &error)) {
+        g_autoptr(GtkAlertDialog) alert = gtk_alert_dialog_new("Could not open Discord");
+        gtk_alert_dialog_set_detail(alert, error->message);
+        gtk_alert_dialog_show(alert, window);
+    }
+}
+
 static GtkWidget *create_navigation(Window *window)
 {
     GtkWidget *rail = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_add_css_class(rail, "navigation-rail");
     gtk_accessible_update_property(GTK_ACCESSIBLE(rail), GTK_ACCESSIBLE_PROPERTY_LABEL, "Navigation", -1);
     window->editor_button = navigation_button("Editor", "editor",
-        "/org/relapse/RelapseGtk/icons/editor.svg", window);
+        "/org/relapse/RelapseGtk/icons/editor.png", window);
     window->settings_button = navigation_button("Settings", "settings",
-        "/org/relapse/RelapseGtk/icons/settings.svg", window);
+        "/org/relapse/RelapseGtk/icons/settings.png", window);
     gtk_toggle_button_set_group(window->settings_button, window->editor_button);
     gtk_box_append(GTK_BOX(rail), GTK_WIDGET(window->editor_button));
     GtkWidget *spacer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_set_vexpand(spacer, TRUE);
     gtk_box_append(GTK_BOX(rail), spacer);
+    GtkWidget *discord = gtk_button_new();
+    gtk_widget_add_css_class(discord, "navigation-button");
+    gtk_widget_add_css_class(discord, "discord-button");
+    gtk_widget_set_tooltip_text(discord, "Join the Relapse Discord");
+    gtk_accessible_update_property(GTK_ACCESSIBLE(discord), GTK_ACCESSIBLE_PROPERTY_LABEL,
+        "Join the Relapse Discord", -1);
+    GtkWidget *discord_icon = gtk_image_new_from_resource("/org/relapse/RelapseGtk/icons/discord.png");
+    gtk_image_set_pixel_size(GTK_IMAGE(discord_icon), 22);
+    gtk_button_set_child(GTK_BUTTON(discord), discord_icon);
+    g_signal_connect(discord, "clicked", G_CALLBACK(open_discord), window);
+    gtk_box_append(GTK_BOX(rail), discord);
     gtk_box_append(GTK_BOX(rail), GTK_WIDGET(window->settings_button));
     gtk_toggle_button_set_active(window->editor_button, TRUE);
     g_signal_connect(window->views, "notify::visible-child-name", G_CALLBACK(view_changed), window);
@@ -462,7 +512,7 @@ GtkWindow *window_new(GtkApplication *application, const char *scripts_path,
     g_object_set_data_full(G_OBJECT(window), "window", state, free_window);
     g_signal_connect(window, "destroy", G_CALLBACK(window_destroyed), state);
     gtk_window_set_default_size(window, 860, 480);
-    gtk_window_set_title(window, "relapsegtk");
+    gtk_window_set_title(window, "Relapse - Running in GTK");
     gtk_window_set_titlebar(window, create_titlebar(window));
 
     state->save = g_simple_action_new("save", NULL);
@@ -490,7 +540,7 @@ GtkWindow *window_new(GtkApplication *application, const char *scripts_path,
     gtk_widget_set_margin_start(box, 12);
     gtk_widget_set_margin_end(box, 12);
 
-    state->tabs = g_object_ref_sink(tabs_new(scripts_path, tabs_changed, state));
+    state->tabs = g_object_ref_sink(tabs_new(scripts_path, tabs_changed, tab_open_requested, state));
     GtkWidget *editor_split = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
     gtk_widget_add_css_class(editor_split, "editor-output-split");
     gtk_widget_set_vexpand(editor_split, TRUE);
@@ -532,7 +582,8 @@ GtkWindow *window_new(GtkApplication *application, const char *scripts_path,
     gtk_stack_add_titled(state->views, paned, "editor", "Editor");
     EditorSettings defaults = editor_settings_defaults();
     state->settings_page = settings_new(&defaults, editor_settings_changed, restore_tabs_changed,
-                                        output_changed, launcher_changed, window);
+                                        output_changed, launcher_changed, open_with_changed,
+                                        check_updates_requested, update_current_version(), window);
     gtk_stack_add_titled(state->views, state->settings_page, "settings", "Settings");
     window_set_editor_settings(window, &defaults);
 

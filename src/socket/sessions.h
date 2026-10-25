@@ -20,4 +20,8 @@ SocketClientState sessions_get_state(Sessions *sessions, const char *path);
 OutputState sessions_get_output_state(Sessions *sessions, const char *path);
 gboolean sessions_can_execute(Sessions *sessions, const char *path);
 SocketClientSendResult sessions_execute(Sessions *sessions, const char *path, const char *name, const char *source);
+SocketClientSendResult sessions_execute_all(Sessions *sessions, const char *name, const char *source,
+                                             guint *queued);
+gboolean sessions_any_can_execute(Sessions *sessions);
+SocketClientState sessions_aggregate_state(Sessions *sessions);
 void sessions_free(Sessions *sessions);

@@ -189,6 +189,59 @@ SocketClientSendResult sessions_execute(Sessions *sessions, const char *path, co
     return session ? ui_bridge_execute(session->bridge, name, source) : SOCKET_CLIENT_NOT_READY;
 }
 
+SocketClientSendResult sessions_execute_all(Sessions *sessions, const char *name, const char *source,
+                                             guint *queued)
+{
+    if (queued) *queued = 0;
+    if (!sessions) return SOCKET_CLIENT_NOT_READY;
+    SocketClientSendResult result = SOCKET_CLIENT_NOT_READY;
+    SocketClientSendResult failure = SOCKET_CLIENT_QUEUED;
+    GHashTableIter iter;
+    gpointer value;
+    g_hash_table_iter_init(&iter, sessions->clients);
+    while (g_hash_table_iter_next(&iter, NULL, &value)) {
+        Session *session = value;
+        if (!session->available || !ui_bridge_is_ready(session->bridge)) continue;
+        SocketClientSendResult sent = ui_bridge_execute(session->bridge, name, source);
+        if (sent == SOCKET_CLIENT_QUEUED) {
+            result = SOCKET_CLIENT_QUEUED;
+            if (queued) ++*queued;
+        } else if (sent != SOCKET_CLIENT_NOT_READY) {
+            failure = sent;
+        }
+    }
+    return result == SOCKET_CLIENT_QUEUED ? SOCKET_CLIENT_QUEUED : failure;
+}
+
+gboolean sessions_any_can_execute(Sessions *sessions)
+{
+    if (!sessions) return FALSE;
+    GHashTableIter iter;
+    gpointer value;
+    g_hash_table_iter_init(&iter, sessions->clients);
+    while (g_hash_table_iter_next(&iter, NULL, &value)) {
+        Session *session = value;
+        if (session->available && ui_bridge_is_ready(session->bridge)) return TRUE;
+    }
+    return FALSE;
+}
+
+SocketClientState sessions_aggregate_state(Sessions *sessions)
+{
+    SocketClientState state = SOCKET_CLIENT_DISCONNECTED;
+    if (!sessions) return state;
+    GHashTableIter iter;
+    gpointer value;
+    g_hash_table_iter_init(&iter, sessions->clients);
+    while (g_hash_table_iter_next(&iter, NULL, &value)) {
+        Session *session = value;
+        if (!session->available) continue;
+        if (session->state == SOCKET_CLIENT_READY) return SOCKET_CLIENT_READY;
+        if (session->state == SOCKET_CLIENT_WAITING) state = SOCKET_CLIENT_WAITING;
+    }
+    return state;
+}
+
 void sessions_free(Sessions *sessions)
 {
     if (!sessions) return;

@@ -17,6 +17,11 @@ typedef struct {
     GtkLabel *launcher_path;
     GCancellable *picker;
     LauncherChangedFunc launcher_changed;
+    GtkDropDown *open_with;
+    GtkEntry *open_command;
+    GtkWidget *open_command_row;
+    OpenWithChangedFunc open_with_changed;
+    CheckUpdatesFunc check_updates;
     gboolean stopped;
     gpointer user_data;
 } Settings;
@@ -74,6 +79,69 @@ static void select_launcher(GtkButton *button, gpointer user_data)
     GWeakRef *owner = g_new0(GWeakRef, 1);
     g_weak_ref_init(owner, page);
     gtk_file_dialog_open(dialog, GTK_WINDOW(gtk_widget_get_root(page)), state->picker, launcher_chosen, owner);
+}
+
+static const char *open_with_labels[] = {
+    "Editor tab", "File manager", "System default", "Custom command", "Nothing",
+};
+
+static void update_open_command_row(Settings *state)
+{
+    guint selected = gtk_drop_down_get_selected(state->open_with);
+    gtk_widget_set_visible(state->open_command_row, selected == OPENER_COMMAND);
+}
+
+static void commit_open_with(Settings *state)
+{
+    if (!state->open_with_changed)
+        return;
+    guint selected = gtk_drop_down_get_selected(state->open_with);
+    OpenerMode mode = selected < G_N_ELEMENTS(open_with_labels) ? (OpenerMode)selected : OPENER_EDITOR;
+    g_autoptr(GError) error = NULL;
+    if (!state->open_with_changed(mode, gtk_editable_get_text(GTK_EDITABLE(state->open_command)),
+                                  &error, state->user_data) && error) {
+        g_autoptr(GtkAlertDialog) alert = gtk_alert_dialog_new("Could not save settings");
+        gtk_alert_dialog_set_detail(alert, error->message);
+        gtk_alert_dialog_show(alert, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(state->open_with))));
+    }
+}
+
+static void open_with_selected(GObject *object, GParamSpec *property, gpointer user_data)
+{
+    (void)object;
+    (void)property;
+    Settings *state = user_data;
+    if (state->updating)
+        return;
+    update_open_command_row(state);
+    commit_open_with(state);
+}
+
+static void open_command_committed(GtkWidget *widget, gpointer user_data)
+{
+    (void)widget;
+    Settings *state = user_data;
+    if (state->updating)
+        return;
+    commit_open_with(state);
+}
+
+void settings_set_open_with(GtkWidget *page, OpenerMode mode, const char *command)
+{
+    Settings *state = g_object_get_data(G_OBJECT(page), "settings");
+    state->updating = TRUE;
+    gtk_drop_down_set_selected(state->open_with,
+        mode < G_N_ELEMENTS(open_with_labels) ? (guint)mode : (guint)OPENER_EDITOR);
+    gtk_editable_set_text(GTK_EDITABLE(state->open_command), command ? command : "");
+    state->updating = FALSE;
+    update_open_command_row(state);
+}
+
+void settings_check_updates(GtkWidget *page)
+{
+    Settings *state = g_object_get_data(G_OBJECT(page), "settings");
+    if (!state->stopped && state->check_updates)
+        state->check_updates(state->user_data);
 }
 
 void settings_shutdown(GtkWidget *page)
@@ -167,7 +235,7 @@ static GtkWidget *label_new(const char *text, const char *style)
     return label;
 }
 
-static void add_row(GtkWidget *group, const char *title, const char *description, GtkWidget *control)
+static GtkWidget *add_row(GtkWidget *group, const char *title, const char *description, GtkWidget *control)
 {
     GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 20);
     gtk_widget_add_css_class(row, "settings-row");
@@ -188,6 +256,7 @@ static void add_row(GtkWidget *group, const char *title, const char *description
     gtk_box_append(GTK_BOX(slot), control);
     gtk_box_append(GTK_BOX(row), slot);
     gtk_box_append(GTK_BOX(group), row);
+    return row;
 }
 
 static GtkWidget *section_new(GtkWidget *column, const char *title, GtkWidget **out_group)
@@ -206,13 +275,16 @@ static GtkWidget *section_new(GtkWidget *column, const char *title, GtkWidget **
 
 GtkWidget *settings_new(const EditorSettings *settings, SettingsChangedFunc changed,
                        RestoreTabsChangedFunc restore_callback, OutputChangedFunc output_callback,
-                       LauncherChangedFunc launcher_callback, gpointer user_data)
+                       LauncherChangedFunc launcher_callback, OpenWithChangedFunc open_with_callback,
+                       CheckUpdatesFunc check_updates, const char *version, gpointer user_data)
 {
     Settings *state = g_new0(Settings, 1);
     state->changed = changed;
     state->restore_changed = restore_callback;
     state->output_changed = output_callback;
     state->launcher_changed = launcher_callback;
+    state->open_with_changed = open_with_callback;
+    state->check_updates = check_updates;
     state->user_data = user_data;
     GtkWidget *page = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(page), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
@@ -311,6 +383,45 @@ GtkWidget *settings_new(const EditorSettings *settings, SettingsChangedFunc chan
     gtk_box_append(GTK_BOX(launcher), GTK_WIDGET(state->launcher_path));
     add_row(launcher_group, "Launcher", "Executable used to launch Profiles", launcher);
     g_signal_connect(state->launcher_button, "clicked", G_CALLBACK(select_launcher), page);
+
+    GtkWidget *scripts_group = NULL;
+    section_new(right, "Scripts", &scripts_group);
+    GtkStringList *open_items = gtk_string_list_new(NULL);
+    for (guint i = 0; i < G_N_ELEMENTS(open_with_labels); ++i)
+        gtk_string_list_append(open_items, open_with_labels[i]);
+    state->open_with = GTK_DROP_DOWN(gtk_drop_down_new(G_LIST_MODEL(open_items), NULL));
+    gtk_widget_add_css_class(GTK_WIDGET(state->open_with), "open-with");
+    gtk_accessible_update_property(GTK_ACCESSIBLE(state->open_with),
+        GTK_ACCESSIBLE_PROPERTY_LABEL, "Open scripts with", -1);
+    gtk_widget_set_valign(GTK_WIDGET(state->open_with), GTK_ALIGN_CENTER);
+    add_row(scripts_group, "Open scripts", "Where clicking a tab name takes you", GTK_WIDGET(state->open_with));
+    g_signal_connect(state->open_with, "notify::selected", G_CALLBACK(open_with_selected), state);
+
+    state->open_command = GTK_ENTRY(gtk_entry_new());
+    gtk_entry_set_placeholder_text(state->open_command, "code %s");
+    gtk_accessible_update_property(GTK_ACCESSIBLE(state->open_command),
+        GTK_ACCESSIBLE_PROPERTY_LABEL, "External editor command", -1);
+    state->open_command_row = add_row(scripts_group, "Editor command",
+        "Command run with the script path; %s is replaced", GTK_WIDGET(state->open_command));
+    g_signal_connect(state->open_command, "activate", G_CALLBACK(open_command_committed), state);
+    GtkEventController *command_focus = gtk_event_controller_focus_new();
+    g_signal_connect(command_focus, "leave", G_CALLBACK(open_command_committed), state);
+    gtk_widget_add_controller(GTK_WIDGET(state->open_command), command_focus);
+    update_open_command_row(state);
+
+    GtkWidget *about_group = NULL;
+    section_new(right, "Updates", &about_group);
+    GtkWidget *update_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_valign(update_box, GTK_ALIGN_CENTER);
+    g_autofree char *running = g_strdup_printf("You are running %s", version);
+    gtk_box_append(GTK_BOX(update_box), label_new(running, "settings-description"));
+    GtkWidget *check = gtk_button_new_with_label("Check now");
+    gtk_widget_add_css_class(check, "check-updates");
+    gtk_accessible_update_property(GTK_ACCESSIBLE(check),
+        GTK_ACCESSIBLE_PROPERTY_LABEL, "Check for updates", -1);
+    g_signal_connect_swapped(check, "clicked", G_CALLBACK(settings_check_updates), page);
+    gtk_box_append(GTK_BOX(update_box), check);
+    add_row(about_group, "Check for updates", "Compare with the latest stable release", update_box);
 
     return page;
 }

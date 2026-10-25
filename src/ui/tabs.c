@@ -8,13 +8,21 @@
 
 enum { MaxScriptBytes = 8 * 1024 * 1024 };
 
+static const char *default_script_names[] = {
+    "Deep-Oceans", "Big Mountains", "Small Dreams", "OwO", "Skill issue",
+    "0GB ram", "Connected?", "math.huge GB ram", "-_-",
+};
+
 typedef struct {
     GtkWidget *strip;
     TabsChangedFunc changed;
+    TabOpenFunc open_requested;
     gpointer user_data;
     GFile *scripts_dir;
     EditorSettings editor_settings;
     guint next_untitled;
+    guint8 name_order[G_N_ELEMENTS(default_script_names)];
+    guint name_cursor;
     SessionWriter *session_writer;
     guint session_timer;
     gint64 session_dirty_since;
@@ -460,13 +468,30 @@ void tabs_save(GtkWidget *tabs)
     gtk_file_dialog_save(dialog, GTK_WINDOW(root), script->save, save_file_chosen, pending_page_new(script));
 }
 
+static const char *random_default_name(Tabs *tabs)
+{
+    if (tabs->name_cursor >= G_N_ELEMENTS(default_script_names)) {
+        for (guint i = 0; i < G_N_ELEMENTS(default_script_names); ++i)
+            tabs->name_order[i] = (guint8)i;
+        for (guint i = G_N_ELEMENTS(default_script_names) - 1; i > 0; --i) {
+            guint j = (guint)g_random_int_range(0, (gint)i + 1);
+            guint8 swap = tabs->name_order[i];
+            tabs->name_order[i] = tabs->name_order[j];
+            tabs->name_order[j] = swap;
+        }
+        tabs->name_cursor = 0;
+    }
+    return default_script_names[tabs->name_order[tabs->name_cursor++]];
+}
+
 static Script *new_script(GtkNotebook *notebook, GFile *file, const char *name, const char *text);
 
 static void new_tab(GtkButton *button, GtkNotebook *notebook)
 {
     (void)button;
     Tabs *tabs = g_object_get_data(G_OBJECT(notebook), "tabs");
-    g_autofree char *name = g_strdup_printf("Untitled %u", ++tabs->next_untitled);
+    const char *name = random_default_name(tabs);
+    ++tabs->next_untitled;
     new_script(notebook, NULL, name, "");
 }
 
@@ -522,6 +547,9 @@ static void select_script(GtkButton *button, gpointer data)
     (void)button;
     Script *script = data;
     gtk_notebook_set_current_page(script->notebook, gtk_notebook_page_num(script->notebook, script->page));
+    Tabs *tabs = g_object_get_data(G_OBJECT(script->notebook), "tabs");
+    if (tabs->open_requested && script->file)
+        tabs->open_requested(script->file, script->name, tabs->user_data);
 }
 
 static GdkContentProvider *drag_tab(GtkDragSource *source, double x, double y, gpointer data)
@@ -849,17 +877,20 @@ static void page_removed(GtkNotebook *notebook, GtkWidget *page, guint index, gp
     }
 }
 
-GtkWidget *tabs_new(const char *scripts_path, TabsChangedFunc changed, gpointer user_data)
+GtkWidget *tabs_new(const char *scripts_path, TabsChangedFunc changed, TabOpenFunc open,
+                    gpointer user_data)
 {
     GtkWidget *pane = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     GtkWidget *notebook = gtk_notebook_new();
     Tabs *tabs = g_new0(Tabs, 1);
     tabs->strip = g_object_ref_sink(tab_strip_new());
     tabs->changed = changed;
+    tabs->open_requested = open;
     tabs->user_data = user_data;
     tabs->scripts_dir = g_file_new_for_path(scripts_path);
     tabs->editor_settings = editor_settings_defaults();
     tabs->next_untitled = 1;
+    tabs->name_cursor = G_N_ELEMENTS(default_script_names);
     g_object_set_data_full(G_OBJECT(notebook), "tabs", tabs, free_tabs);
     g_object_set_data(G_OBJECT(pane), "tabs", tabs);
     g_object_set_data(G_OBJECT(pane), "notebook", notebook);
@@ -883,7 +914,7 @@ GtkWidget *tabs_new(const char *scripts_path, TabsChangedFunc changed, gpointer 
     g_signal_connect_after(notebook, "switch-page", G_CALLBACK(switched_page), NULL);
     g_signal_connect(notebook, "page-reordered", G_CALLBACK(page_reordered), NULL);
     g_signal_connect(notebook, "page-removed", G_CALLBACK(page_removed), NULL);
-    new_script(GTK_NOTEBOOK(notebook), NULL, "Untitled 1", "print(\"hello from relapsegtk\")");
+    new_script(GTK_NOTEBOOK(notebook), NULL, random_default_name(tabs), "print(\"hello from relapsegtk\")");
     return pane;
 }
 

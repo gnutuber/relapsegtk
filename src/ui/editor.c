@@ -10,24 +10,48 @@ void editor_apply_settings(GtkWidget *editor, const EditorSettings *settings)
     gtk_source_view_set_indent_width(GTK_SOURCE_VIEW(editor), settings->indent_width);
 }
 
+static gboolean editor_materialize_scheme(const char *dir)
+{
+    g_autoptr(GBytes) bytes = g_resources_lookup_data("/org/relapse/RelapseGtk/styles/relapse.xml",
+        G_RESOURCE_LOOKUP_FLAGS_NONE, NULL);
+    if (!bytes)
+        return FALSE;
+    gsize size = 0;
+    const char *data = g_bytes_get_data(bytes, &size);
+    g_autofree char *path = g_build_filename(dir, "relapse.xml", NULL);
+    return g_file_set_contents(path, data, (gssize)size, NULL);
+}
+
 GtkWidget *editor_new(const EditorSettings *settings)
 {
     gtk_source_init();
     GtkSourceBuffer *buffer = gtk_source_buffer_new(NULL);
 
     GtkSourceLanguageManager *languages = gtk_source_language_manager_new();
-    const char *language_paths[] = {"resource:///org/gnome/gtksourceview/language-specs", NULL};
-    gtk_source_language_manager_set_search_path(languages, language_paths);
     GtkSourceLanguage *language = gtk_source_language_manager_get_language(languages, "lua");
+    if (!language) {
+        const char *language_paths[] = {"resource:///org/gnome/gtksourceview/language-specs", NULL};
+        gtk_source_language_manager_set_search_path(languages, language_paths);
+        language = gtk_source_language_manager_get_language(languages, "lua");
+    }
     if (!language)
         g_error("GtkSourceView's bundled Lua language is unavailable");
     gtk_source_buffer_set_language(buffer, language);
     g_object_set_data_full(G_OBJECT(buffer), "languages", languages, g_object_unref);
 
     GtkSourceStyleSchemeManager *schemes = gtk_source_style_scheme_manager_new();
+#if GTK_SOURCE_CHECK_VERSION(5, 16, 0)
     const char *style_paths[] = {"resource:///org/relapse/RelapseGtk/styles", NULL};
     gtk_source_style_scheme_manager_set_search_path(schemes, style_paths);
+#endif
     GtkSourceStyleScheme *scheme = gtk_source_style_scheme_manager_get_scheme(schemes, "relapse");
+    if (!scheme) {
+        g_autofree char *dir = g_build_filename(g_get_user_cache_dir(), "relapsegtk", NULL);
+        if (g_mkdir_with_parents(dir, 0700) == 0 && editor_materialize_scheme(dir)) {
+            gtk_source_style_scheme_manager_append_search_path(schemes, dir);
+            scheme = gtk_source_style_scheme_manager_get_scheme(schemes, "relapse");
+        }
+    }
     if (!scheme)
         g_error("The bundled editor color scheme is unavailable");
     gtk_source_buffer_set_style_scheme(buffer, scheme);

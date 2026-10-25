@@ -8,13 +8,14 @@
     <file>icons/chevron-left.svg</file>
     <file>icons/chevron-right.svg</file>
     <file>icons/caret-down.svg</file>
-    <file>icons/rename.svg</file>
-    <file>icons/profiles.svg</file>
-    <file>icons/editor.svg</file>
-    <file>icons/settings.svg</file>
+    <file>icons/rename.png</file>
+    <file>icons/profiles.png</file>
+    <file>icons/editor.png</file>
+    <file>icons/settings.png</file>
     <file>icons/folder-open.svg</file>
     <file>icons/play.svg</file>
     <file>icons/save.svg</file>
     <file>icons/delete.svg</file>
+    <file>icons/discord.png</file>
   </gresource>
 </gresources>

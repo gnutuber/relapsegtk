@@ -1,26 +1,27 @@
+@define-color relapse_background #1c1d20;
+@define-color relapse_editor #131417;
+@define-color relapse_control #303238;
+@define-color relapse_hover #3d4048;
+@define-color relapse_pressed #25272c;
+@define-color relapse_border #42454e;
+@define-color relapse_text #e7e8ec;
+@define-color relapse_muted #a4a7b0;
+@define-color relapse_focus #c1c6d2;
+@define-color relapse_selection #484d5b;
 .relapse-ui,
 .relapse-ui * {
     all: unset;
-    --relapse-background: #1c1d20;
-    --relapse-editor: #131417;
-    --relapse-control: #303238;
-    --relapse-hover: #3d4048;
-    --relapse-pressed: #25272c;
-    --relapse-border: #42454e;
-    --relapse-text: #e7e8ec;
-    --relapse-muted: #a4a7b0;
-    --relapse-focus: #c1c6d2;
-    --relapse-selection: #484d5b;
+
     font-family: "DejaVu Sans", sans-serif;
     font-size: 13px;
-    color: var(--relapse-text);
-    caret-color: var(--relapse-text);
+    color: @relapse_text;
+    caret-color: @relapse_text;
     -gtk-icon-size: 16px;
 }
 
 window.relapse-ui {
-    background-color: var(--relapse-background);
-    border: 1px solid var(--relapse-border);
+    background-color: @relapse_background;
+    border: 1px solid @relapse_border;
     border-radius: 6px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
 }
@@ -33,8 +34,8 @@ window.relapse-ui.fullscreen {
 }
 
 .relapse-ui headerbar {
-    background-color: var(--relapse-background);
-    border-bottom: 1px solid var(--relapse-border);
+    background-color: @relapse_background;
+    border-bottom: 1px solid @relapse_border;
     border-radius: 6px 6px 0 0;
     min-height: 34px;
     padding: 4px 6px;
@@ -53,12 +54,12 @@ window.relapse-ui.fullscreen {
 
 .relapse-ui image.app-logo {
     -gtk-icon-size: 22px;
-    color: var(--relapse-text);
+    color: @relapse_text;
     animation: relapse-logo-pulse 5s ease-in-out infinite;
 }
 
 .relapse-ui .titlebar-wrap {
-    background-color: var(--relapse-background);
+    background-color: @relapse_background;
     border-radius: 6px 6px 0 0;
 }
 
@@ -87,26 +88,26 @@ window.relapse-ui.fullscreen headerbar {
     min-height: 30px;
     min-width: 30px;
     padding: 0 14px;
-    background-color: var(--relapse-control);
-    border: 1px solid var(--relapse-border);
+    background-color: @relapse_control;
+    border: 1px solid @relapse_border;
     border-radius: 3px;
 }
 
 .relapse-ui button:hover:not(:disabled) {
-    background-color: var(--relapse-hover);
+    background-color: @relapse_hover;
 }
 
 .relapse-ui button:active:not(:disabled) {
-    background-color: var(--relapse-pressed);
+    background-color: @relapse_pressed;
 }
 
 .relapse-ui button:disabled,
 .relapse-ui button:disabled label {
-    color: var(--relapse-muted);
+    color: @relapse_muted;
 }
 
 .relapse-ui button:disabled {
-    background-color: var(--relapse-pressed);
+    background-color: @relapse_pressed;
 }
 
 .relapse-ui .editor-toolbar button:disabled image {
@@ -124,14 +125,14 @@ window.relapse-ui.fullscreen headerbar {
 }
 
 .relapse-ui .connection-status .status-label {
-    color: var(--relapse-muted);
+    color: @relapse_muted;
 }
 
 .relapse-ui .connection-status .status-dot {
     min-width: 7px;
     min-height: 7px;
     border-radius: 50%;
-    background-color: var(--relapse-muted);
+    background-color: @relapse_muted;
 }
 
 .relapse-ui .connection-status.ready .status-dot {
@@ -162,23 +163,23 @@ window.relapse-ui.fullscreen headerbar {
 
 .relapse-ui dropdown popover listview row:hover,
 .relapse-ui dropdown popover listview row:selected {
-    background-color: var(--relapse-selection);
+    background-color: @relapse_selection;
 }
 
 .relapse-ui .profiles-list entry {
     min-height: 28px;
     padding: 0 8px;
-    background-color: var(--relapse-editor);
-    border: 1px solid var(--relapse-border);
+    background-color: @relapse_editor;
+    border: 1px solid @relapse_border;
     border-radius: 3px;
 }
 
 .relapse-ui .profiles-list entry:focus-within {
-    border-color: var(--relapse-focus);
+    border-color: @relapse_focus;
 }
 
 .relapse-ui .profiles-list entry selection {
-    background-color: var(--relapse-selection);
+    background-color: @relapse_selection;
 }
 
 .relapse-ui .socket-picker > button {
@@ -205,7 +206,7 @@ window.relapse-ui.fullscreen headerbar {
 
 .relapse-ui .profile-picker {
     padding: 8px;
-    border-top: 1px solid var(--relapse-border);
+    border-top: 1px solid @relapse_border;
 }
 
 .relapse-ui button.profiles-button {
@@ -218,8 +219,8 @@ window.relapse-ui.fullscreen headerbar {
 }
 
 .relapse-ui .profiles-list {
-    background-color: var(--relapse-editor);
-    border: 1px solid var(--relapse-border);
+    background-color: @relapse_editor;
+    border: 1px solid @relapse_border;
     border-radius: 3px;
 }
 
@@ -229,15 +230,15 @@ window.relapse-ui.fullscreen headerbar {
 }
 
 .relapse-ui .profiles-list row:hover {
-    background-color: var(--relapse-hover);
+    background-color: @relapse_hover;
 }
 
 .relapse-ui .profiles-list row:selected {
-    background-color: var(--relapse-selection);
+    background-color: @relapse_selection;
 }
 
 .relapse-ui .profiles-list row:focus-visible {
-    outline: 1px solid var(--relapse-focus);
+    outline: 1px solid @relapse_focus;
     outline-offset: -1px;
 }
 
@@ -257,11 +258,11 @@ window.relapse-ui.fullscreen headerbar {
     min-height: 28px;
     border-color: transparent;
     background-color: transparent;
-    color: var(--relapse-muted);
+    color: @relapse_muted;
 }
 
 .relapse-ui button:focus-visible {
-    outline: 2px solid var(--relapse-focus);
+    outline: 2px solid @relapse_focus;
     outline-offset: 2px;
 }
 
@@ -274,58 +275,58 @@ window.relapse-ui.fullscreen headerbar {
 }
 
 .relapse-ui button.window-control:hover {
-    background-color: var(--relapse-hover);
+    background-color: @relapse_hover;
 }
 
 .relapse-ui button.window-control:active {
-    background-color: var(--relapse-pressed);
+    background-color: @relapse_pressed;
 }
 
 .relapse-ui scrolledwindow.editor {
-    border: 1px solid var(--relapse-border);
-    background-color: var(--relapse-editor);
+    border: 1px solid @relapse_border;
+    background-color: @relapse_editor;
 }
 
 .relapse-ui scrolledwindow.editor:focus-within {
-    border-color: var(--relapse-focus);
+    border-color: @relapse_focus;
 }
 
 .relapse-ui textview,
 .relapse-ui textview text,
 .relapse-ui textview border {
-    background-color: var(--relapse-editor);
+    background-color: @relapse_editor;
     font-family: "DejaVu Sans Mono", monospace;
 }
 
 .relapse-ui textview gutter,
 .relapse-ui textview gutter * {
     font-family: "DejaVu Sans Mono", monospace;
-    background-color: var(--relapse-editor);
-    color: var(--relapse-muted);
+    background-color: @relapse_editor;
+    color: @relapse_muted;
 }
 
 .relapse-ui textview text selection {
-    background-color: var(--relapse-selection);
-    color: var(--relapse-text);
+    background-color: @relapse_selection;
+    color: @relapse_text;
 }
 
 .relapse-ui .editor-search {
     padding: 4px 6px;
-    border: 1px solid var(--relapse-border);
+    border: 1px solid @relapse_border;
     border-bottom: 0;
-    background-color: var(--relapse-background);
+    background-color: @relapse_background;
 }
 
 .relapse-ui .editor-search searchentry {
     min-height: 26px;
     padding: 0 6px;
-    border: 1px solid var(--relapse-border);
+    border: 1px solid @relapse_border;
     border-radius: 3px;
-    background-color: var(--relapse-editor);
+    background-color: @relapse_editor;
 }
 
 .relapse-ui .editor-search searchentry:focus-within {
-    border-color: var(--relapse-focus);
+    border-color: @relapse_focus;
 }
 
 .relapse-ui .editor-search searchentry.no-matches {
@@ -333,17 +334,17 @@ window.relapse-ui.fullscreen headerbar {
 }
 
 .relapse-ui .editor-search searchentry selection {
-    background-color: var(--relapse-selection);
-    color: var(--relapse-text);
+    background-color: @relapse_selection;
+    color: @relapse_text;
 }
 
 .relapse-ui .editor-search searchentry image {
     margin: 0 4px;
-    color: var(--relapse-muted);
+    color: @relapse_muted;
 }
 
 .relapse-ui .editor-search .search-count {
-    color: var(--relapse-muted);
+    color: @relapse_muted;
     font-size: 11px;
 }
 
@@ -354,12 +355,12 @@ window.relapse-ui.fullscreen headerbar {
 }
 
 .relapse-ui .editor-search button:checked {
-    background-color: var(--relapse-selection);
-    border-color: var(--relapse-focus);
+    background-color: @relapse_selection;
+    border-color: @relapse_focus;
 }
 
 .relapse-ui scrollbar {
-    background-color: var(--relapse-background);
+    background-color: @relapse_background;
 }
 
 .relapse-ui scrollbar slider {
@@ -367,7 +368,7 @@ window.relapse-ui.fullscreen headerbar {
     min-height: 32px;
     margin: 2px;
     border-radius: 3px;
-    background-color: var(--relapse-border);
+    background-color: @relapse_border;
 }
 
 .relapse-ui scrollbar.horizontal slider {
@@ -377,23 +378,23 @@ window.relapse-ui.fullscreen headerbar {
 
 .relapse-ui scrollbar slider:hover,
 .relapse-ui scrollbar slider:active {
-    background-color: var(--relapse-muted);
+    background-color: @relapse_muted;
 }
 
 .relapse-ui paned.horizontal > separator {
     min-width: 5px;
-    background-color: var(--relapse-border);
+    background-color: @relapse_border;
 }
 
 .relapse-ui paned.horizontal > separator:hover {
-    background-color: var(--relapse-focus);
+    background-color: @relapse_focus;
 }
 
 .relapse-ui .navigation-rail {
     min-width: 46px;
     padding: 4px 0;
-    background-color: var(--relapse-editor);
-    border-right: 1px solid var(--relapse-border);
+    background-color: #3a3a3a;
+    border-right: 1px solid @relapse_border;
 }
 
 .relapse-ui button.navigation-button {
@@ -412,12 +413,12 @@ window.relapse-ui.fullscreen headerbar {
 }
 
 .relapse-ui button.navigation-button:hover {
-    background-color: var(--relapse-control);
+    background-color: @relapse_control;
 }
 
 .relapse-ui button.navigation-button:checked {
-    border-left-color: var(--relapse-focus);
-    background-color: var(--relapse-control);
+    border-left-color: @relapse_focus;
+    background-color: @relapse_control;
 }
 
 .relapse-ui button.navigation-button:checked image,
@@ -440,13 +441,13 @@ window.relapse-ui.fullscreen headerbar {
 
 .relapse-ui label.settings-group-title {
     font-weight: 600;
-    color: var(--relapse-muted);
+    color: @relapse_muted;
 }
 
 .relapse-ui .settings-group {
-    border: 1px solid var(--relapse-border);
+    border: 1px solid @relapse_border;
     border-radius: 5px;
-    background-color: var(--relapse-editor);
+    background-color: @relapse_editor;
 }
 
 .relapse-ui .settings-row {
@@ -455,7 +456,7 @@ window.relapse-ui.fullscreen headerbar {
 }
 
 .relapse-ui .settings-row + .settings-row {
-    border-top: 1px solid var(--relapse-border);
+    border-top: 1px solid @relapse_border;
 }
 
 .relapse-ui label.settings-label {
@@ -464,12 +465,12 @@ window.relapse-ui.fullscreen headerbar {
 
 .relapse-ui label.settings-description {
     font-size: 12px;
-    color: var(--relapse-muted);
+    color: @relapse_muted;
 }
 
 .relapse-ui .settings-group spinbutton {
-    background-color: var(--relapse-control);
-    border: 1px solid var(--relapse-border);
+    background-color: @relapse_control;
+    border: 1px solid @relapse_border;
     border-radius: 3px;
     min-height: 28px;
 }
@@ -480,7 +481,7 @@ window.relapse-ui.fullscreen headerbar {
 }
 
 .relapse-ui .settings-group spinbutton text selection {
-    background-color: var(--relapse-selection);
+    background-color: @relapse_selection;
 }
 
 .relapse-ui .settings-group spinbutton button {
@@ -488,13 +489,13 @@ window.relapse-ui.fullscreen headerbar {
     min-width: 26px;
     padding: 0;
     border: 0;
-    border-left: 1px solid var(--relapse-border);
+    border-left: 1px solid @relapse_border;
     border-radius: 0;
 }
 
 .relapse-ui .settings-group spinbutton:focus-within,
 .relapse-ui .settings-group switch:focus-visible {
-    outline: 2px solid var(--relapse-focus);
+    outline: 2px solid @relapse_focus;
     outline-offset: 2px;
 }
 
@@ -502,31 +503,31 @@ window.relapse-ui.fullscreen headerbar {
     min-width: 34px;
     min-height: 18px;
     padding: 2px;
-    border: 1px solid var(--relapse-border);
+    border: 1px solid @relapse_border;
     border-radius: 999px;
-    background-color: var(--relapse-pressed);
+    background-color: @relapse_pressed;
     transition: background-color 140ms ease, border-color 140ms ease;
 }
 
 .relapse-ui .settings-group switch:hover {
-    border-color: var(--relapse-muted);
+    border-color: @relapse_muted;
 }
 
 .relapse-ui .settings-group switch:checked {
-    background-color: var(--relapse-selection);
-    border-color: var(--relapse-focus);
+    background-color: @relapse_selection;
+    border-color: @relapse_focus;
 }
 
 .relapse-ui .settings-group switch slider {
     min-width: 12px;
     min-height: 12px;
     border-radius: 999px;
-    background-color: var(--relapse-muted);
+    background-color: @relapse_muted;
     transition: background-color 140ms ease;
 }
 
 .relapse-ui .settings-group switch:checked slider {
-    background-color: var(--relapse-text);
+    background-color: @relapse_text;
 }
 
 .relapse-ui .settings-group switch image {
@@ -534,15 +535,15 @@ window.relapse-ui.fullscreen headerbar {
 }
 
 .relapse-ui .settings-group entry {
-    background-color: var(--relapse-control);
-    border: 1px solid var(--relapse-border);
+    background-color: @relapse_control;
+    border: 1px solid @relapse_border;
     border-radius: 3px;
     min-height: 28px;
     padding: 0 8px;
 }
 
 .relapse-ui .settings-group entry:focus-within {
-    border-color: var(--relapse-focus);
+    border-color: @relapse_focus;
 }
 
 .relapse-ui .indent-options button {
@@ -565,13 +566,13 @@ window.relapse-ui.fullscreen headerbar {
 }
 
 .relapse-ui .indent-options button:checked {
-    background-color: var(--relapse-selection);
-    box-shadow: inset 0 -2px var(--relapse-focus);
+    background-color: @relapse_selection;
+    box-shadow: inset 0 -2px @relapse_focus;
 }
 
 .relapse-ui .scripts-sidebar {
     padding: 12px 8px;
-    background-color: var(--relapse-background);
+    background-color: @relapse_background;
 }
 
 .relapse-ui label.scripts-title {
@@ -581,7 +582,7 @@ window.relapse-ui.fullscreen headerbar {
 
 .relapse-ui label.scripts-empty {
     padding: 12px 6px;
-    color: var(--relapse-muted);
+    color: @relapse_muted;
 }
 
 .relapse-ui list.scripts-list {
@@ -591,31 +592,36 @@ window.relapse-ui.fullscreen headerbar {
 .relapse-ui list.scripts-list row.script-row {
     min-height: 28px;
     padding: 2px 8px;
+    margin: 1px 0;
     border-radius: 3px;
     background-color: transparent;
     border: 0;
 }
 
+.relapse-ui list.scripts-list row.script-row:hover {
+    background-color: @relapse_control;
+}
+
 .relapse-ui list.scripts-list row.script-row:selected {
-    background-color: var(--relapse-selection);
+    background-color: @relapse_selection;
 }
 
 .relapse-ui list.scripts-list row.script-row:focus-visible {
-    outline: 1px solid var(--relapse-focus);
+    outline: 1px solid @relapse_focus;
     outline-offset: -1px;
 }
 
 .relapse-ui entry.script-rename {
     min-height: 24px;
     padding: 0 4px;
-    background-color: var(--relapse-editor);
-    border: 1px solid var(--relapse-focus);
+    background-color: @relapse_editor;
+    border: 1px solid @relapse_focus;
     border-radius: 2px;
 }
 
 .relapse-ui entry.script-rename selection {
-    background-color: var(--relapse-selection);
-    color: var(--relapse-text);
+    background-color: @relapse_selection;
+    color: @relapse_text;
 }
 
 .relapse-ui entry.script-rename.error {
@@ -641,7 +647,7 @@ window.relapse-ui.fullscreen headerbar {
 }
 
 .relapse-ui popover.script-menu button.menu-item:hover {
-    background-color: var(--relapse-hover);
+    background-color: @relapse_hover;
 }
 
 .relapse-ui popover.script-menu button.menu-item label {
@@ -649,8 +655,8 @@ window.relapse-ui.fullscreen headerbar {
 }
 
 .relapse-ui .script-tab-header {
-    background-color: var(--relapse-background);
-    border: 1px solid var(--relapse-border);
+    background-color: @relapse_background;
+    border: 1px solid @relapse_border;
     border-bottom-width: 0;
 }
 
@@ -658,28 +664,28 @@ window.relapse-ui.fullscreen headerbar {
     min-height: 34px;
     padding: 0 8px 0 0;
     border-top: 2px solid transparent;
-    border-right: 1px solid var(--relapse-border);
+    border-right: 1px solid @relapse_border;
 }
 
 .relapse-ui .script-tab label {
-    color: var(--relapse-muted);
+    color: @relapse_muted;
 }
 
 .relapse-ui .script-tab:hover {
-    background-color: var(--relapse-control);
+    background-color: @relapse_control;
 }
 
 .relapse-ui .script-tab.active {
-    border-top-color: var(--relapse-focus);
-    background-color: var(--relapse-editor);
+    border-top-color: @relapse_focus;
+    background-color: @relapse_editor;
 }
 
 .relapse-ui .script-tab.active label {
-    color: var(--relapse-text);
+    color: @relapse_text;
 }
 
 .relapse-ui .script-tab:focus-visible {
-    outline: 1px solid var(--relapse-focus);
+    outline: 1px solid @relapse_focus;
     outline-offset: -3px;
 }
 
@@ -699,21 +705,21 @@ window.relapse-ui.fullscreen headerbar {
 
 .relapse-ui button.tab-close:hover,
 .relapse-ui button.tab-add:hover {
-    background-color: var(--relapse-hover);
+    background-color: @relapse_hover;
 }
 
 .relapse-ui label.script-message {
     padding: 20px;
-    color: var(--relapse-muted);
-    background-color: var(--relapse-editor);
-    border: 1px solid var(--relapse-border);
+    color: @relapse_muted;
+    background-color: @relapse_editor;
+    border: 1px solid @relapse_border;
 }
 
 .relapse-ui popover contents {
     padding: 6px;
-    border: 1px solid var(--relapse-border);
+    border: 1px solid @relapse_border;
     border-radius: 3px;
-    background-color: var(--relapse-background);
+    background-color: @relapse_background;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
@@ -725,18 +731,18 @@ window.relapse-ui.fullscreen headerbar {
 
 .relapse-ui popover modelbutton:hover,
 .relapse-ui popover modelbutton:selected {
-    background-color: var(--relapse-hover);
+    background-color: @relapse_hover;
 }
 
 .relapse-ui popover modelbutton:disabled,
 .relapse-ui popover modelbutton:disabled label {
-    color: var(--relapse-muted);
+    color: @relapse_muted;
 }
 
 .relapse-ui popover separator {
     min-height: 1px;
     margin: 4px 0;
-    background-color: var(--relapse-border);
+    background-color: @relapse_border;
 }
 
 .relapse-ui .editor-output-split > separator {
@@ -808,18 +814,18 @@ window.relapse-ui.fullscreen headerbar {
     border-radius: 0;
     border-bottom: 2px solid transparent;
     background: transparent;
-    color: var(--relapse-muted);
+    color: @relapse_muted;
     box-shadow: none;
 }
 
 .relapse-ui .output-source:hover {
-    background: var(--relapse-hover);
+    background: @relapse_hover;
 }
 
 .relapse-ui .output-source.active {
-    border-bottom-color: var(--relapse-focus);
-    color: var(--relapse-text);
-    background: var(--relapse-control);
+    border-bottom-color: @relapse_focus;
+    color: @relapse_text;
+    background: @relapse_control;
 }
 
 .relapse-ui .output-tab:not(.running) label {
@@ -836,12 +842,26 @@ window.relapse-ui.fullscreen headerbar {
     opacity: 1;
 }
 
+.relapse-ui .output-jump {
+    min-width: 26px;
+    min-height: 26px;
+    padding: 0;
+    border: 1px solid @relapse_border;
+    border-radius: 13px;
+    background-color: @relapse_control;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+.relapse-ui .output-jump:hover {
+    background-color: @relapse_hover;
+}
+
 .relapse-ui .output-activity {
     opacity: 0.55;
     min-width: 4px;
     min-height: 4px;
     border-radius: 50%;
-    border: 1px solid var(--relapse-muted);
+    border: 1px solid @relapse_muted;
     background: transparent;
 }
 
