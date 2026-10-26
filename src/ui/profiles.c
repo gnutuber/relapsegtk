@@ -22,6 +22,7 @@ typedef struct {
     ProfileRow *editing;
     char **names;
     ProfileLaunchFunc launch;
+    ProfileLaunchAllFunc launch_all;
     ProfileRunningFunc running;
     gpointer user_data;
 } ProfilePicker;
@@ -329,6 +330,17 @@ static void launch_clicked(GtkButton *button, gpointer user_data)
     state->launch(name, state->user_data);
 }
 
+static void launch_all_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    ProfilePicker *state = user_data;
+    if (state->editing || !state->launch_all || !state->names || !state->names[0])
+        return;
+    g_auto(GStrv) names = g_strdupv((char **)state->names);
+    gtk_widget_set_visible(GTK_WIDGET(state->dialog), FALSE);
+    state->launch_all((const char *const *)names, state->user_data);
+}
+
 static void free_row(gpointer user_data)
 {
     ProfileRow *row = user_data;
@@ -483,6 +495,11 @@ static void open_profiles(GtkButton *button, gpointer user_data)
     gtk_list_box_set_selection_mode(state->list, GTK_SELECTION_NONE);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), GTK_WIDGET(state->list));
     gtk_box_append(GTK_BOX(content), scroll);
+    GtkWidget *launch_all = gtk_button_new_with_label("Launch all Profiles");
+    gtk_widget_add_css_class(launch_all, "launch-all-profiles");
+    gtk_widget_set_tooltip_text(launch_all, "Launch every Profile that is not skipped in Settings");
+    g_signal_connect(launch_all, "clicked", G_CALLBACK(launch_all_clicked), state);
+    gtk_box_append(GTK_BOX(content), launch_all);
     state->error = GTK_LABEL(gtk_label_new(NULL));
     gtk_label_set_wrap(state->error, TRUE);
     gtk_label_set_max_width_chars(state->error, 38);
@@ -524,10 +541,12 @@ static void free_profile_picker(gpointer user_data)
     g_free(state);
 }
 
-GtkWidget *profile_picker_new(ProfileLaunchFunc launch, ProfileRunningFunc running, gpointer user_data)
+GtkWidget *profile_picker_new(ProfileLaunchFunc launch, ProfileLaunchAllFunc launch_all,
+                              ProfileRunningFunc running, gpointer user_data)
 {
     ProfilePicker *state = g_new0(ProfilePicker, 1);
     state->launch = launch;
+    state->launch_all = launch_all;
     state->running = running;
     state->user_data = user_data;
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);

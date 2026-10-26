@@ -17,5 +17,7 @@
     <file>icons/save.svg</file>
     <file>icons/delete.svg</file>
     <file>icons/discord.png</file>
+    <file>icons/furfox.png</file>
+    <file>icons/autoexec.png</file>
   </gresource>
 </gresources>

@@ -6,21 +6,25 @@
 #include "style.h"
 #include "update/check.h"
 #include "output.h"
-#include "shader_strip.h"
 #include "profiles.h"
+#include "autoexec.h"
+#include "shader_strip.h"
 
 typedef struct {
     GtkWidget *tabs;
     GtkWidget *toolbar;
     GtkWidget *output;
     GtkWidget *profiles;
+    GtkWidget *shader_strip;
     GtkWidget *socket_picker;
     gboolean output_enabled;
     GtkStack *views;
     GtkWidget *editor_page;
     GtkWidget *settings_page;
+    GtkWidget *autoexec_page;
     GtkToggleButton *editor_button;
     GtkToggleButton *settings_button;
+    GtkToggleButton *autoexec_button;
     GSimpleAction *save;
     GSimpleAction *find[3];
     gboolean stopped;
@@ -40,7 +44,17 @@ void window_set_launcher(GtkWindow *window, const char *path)
 
 void window_set_open_with(GtkWindow *window, OpenerMode mode, const char *command)
 {
-    settings_set_open_with(window_data(window)->settings_page, mode, command);
+    Window *state = window_data(window);
+    settings_set_open_with(state->settings_page, mode, command);
+    if (state->tabs)
+        tabs_set_open_with(state->tabs, mode);
+}
+
+void window_set_profiles_options(GtkWindow *window, gint delay_ms, const char *const *excluded)
+{
+    Window *state = window_data(window);
+    if (state->settings_page)
+        settings_set_profiles_options(state->settings_page, delay_ms, excluded);
 }
 
 void window_show_settings(GtkWindow *window)
@@ -60,6 +74,8 @@ void window_update_profiles(GtkWindow *window, const char *const *names,
     Window *state = window_data(window);
     profile_picker_update(state->profiles, names);
     socket_picker_update(state->socket_picker, sockets, selected);
+    if (state->settings_page)
+        settings_set_profiles(state->settings_page, names);
 }
 
 static gboolean launcher_changed(const char *path, GError **error, gpointer user_data)
@@ -79,8 +95,25 @@ static void check_updates_requested(gpointer user_data)
 static gboolean open_with_changed(OpenerMode mode, const char *command, GError **error, gpointer user_data)
 {
     Window *state = window_data(user_data);
+    if (state->tabs)
+        tabs_set_open_with(state->tabs, mode);
     return !state->stopped && (!state->handlers.open_with_changed ||
         state->handlers.open_with_changed(mode, command, error, state->user_data));
+}
+
+static gboolean profiles_options_changed(gint delay_ms, const char *const *excluded,
+                                         GError **error, gpointer user_data)
+{
+    Window *state = window_data(user_data);
+    return !state->stopped && (!state->handlers.profiles_changed ||
+        state->handlers.profiles_changed(delay_ms, excluded, error, state->user_data));
+}
+
+static void launch_all_profiles(const char *const *names, gpointer user_data)
+{
+    Window *state = window_data(user_data);
+    if (!state->stopped && state->handlers.launch_all_profiles)
+        state->handlers.launch_all_profiles(names, state->user_data);
 }
 
 static void socket_selected(const char *path, gpointer user_data)
@@ -342,9 +375,10 @@ static void find_requested(GSimpleAction *action, GVariant *parameter, gpointer 
 static void view_selected(GtkToggleButton *button, gpointer user_data)
 {
     Window *window = user_data;
-    if (!window->stopped && gtk_toggle_button_get_active(button))
+    if (!window->stopped && gtk_toggle_button_get_active(button)) {
         gtk_stack_set_visible_child_name(window->views,
             g_object_get_data(G_OBJECT(button), "view-name"));
+    }
 }
 
 static void view_changed(GtkStack *views, GParamSpec *property, gpointer user_data)
@@ -353,7 +387,10 @@ static void view_changed(GtkStack *views, GParamSpec *property, gpointer user_da
     Window *window = user_data;
     if (window->stopped || !gtk_stack_get_visible_child(views))
         return;
-    gtk_toggle_button_set_active(editor_visible(window) ? window->editor_button : window->settings_button, TRUE);
+    GtkWidget *visible = gtk_stack_get_visible_child(views);
+    GtkToggleButton *button = visible == window->settings_page ? window->settings_button
+        : visible == window->autoexec_page ? window->autoexec_button : window->editor_button;
+    gtk_toggle_button_set_active(button, TRUE);
     tabs_changed(window->tabs, window);
 }
 
@@ -365,23 +402,38 @@ static GtkToggleButton *navigation_button(const char *label, const char *view,
     gtk_widget_set_tooltip_text(button, label);
     gtk_accessible_update_property(GTK_ACCESSIBLE(button), GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
     GtkWidget *image = gtk_image_new_from_resource(icon);
-    gtk_image_set_pixel_size(GTK_IMAGE(image), 22);
+    gtk_image_set_pixel_size(GTK_IMAGE(image), 40);
     gtk_button_set_child(GTK_BUTTON(button), image);
     g_object_set_data_full(G_OBJECT(button), "view-name", g_strdup(view), g_free);
     g_signal_connect(button, "toggled", G_CALLBACK(view_selected), window);
     return GTK_TOGGLE_BUTTON(button);
 }
 
-static void open_discord(GtkButton *button, gpointer user_data)
+static void open_uri(GtkButton *button, gpointer user_data)
 {
-    (void)button;
     GtkWindow *window = user_data;
+    const char *uri = g_object_get_data(G_OBJECT(button), "uri");
     g_autoptr(GError) error = NULL;
-    if (!g_app_info_launch_default_for_uri("https://discord.gg/getrelapse", NULL, &error)) {
-        g_autoptr(GtkAlertDialog) alert = gtk_alert_dialog_new("Could not open Discord");
+    if (!g_app_info_launch_default_for_uri(uri, NULL, &error)) {
+        g_autoptr(GtkAlertDialog) alert = gtk_alert_dialog_new("Could not open link");
         gtk_alert_dialog_set_detail(alert, error->message);
         gtk_alert_dialog_show(alert, window);
     }
+}
+
+static GtkWidget *link_button(const char *label, const char *icon, const char *uri,
+                              Window *window)
+{
+    GtkWidget *button = gtk_button_new();
+    gtk_widget_add_css_class(button, "navigation-button");
+    gtk_widget_set_tooltip_text(button, label);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(button), GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
+    GtkWidget *image = gtk_image_new_from_resource(icon);
+    gtk_image_set_pixel_size(GTK_IMAGE(image), 40);
+    gtk_button_set_child(GTK_BUTTON(button), image);
+    g_object_set_data_full(G_OBJECT(button), "uri", g_strdup(uri), g_free);
+    g_signal_connect(button, "clicked", G_CALLBACK(open_uri), window);
+    return button;
 }
 
 static GtkWidget *create_navigation(Window *window)
@@ -391,24 +443,21 @@ static GtkWidget *create_navigation(Window *window)
     gtk_accessible_update_property(GTK_ACCESSIBLE(rail), GTK_ACCESSIBLE_PROPERTY_LABEL, "Navigation", -1);
     window->editor_button = navigation_button("Editor", "editor",
         "/org/relapse/RelapseGtk/icons/editor.png", window);
+    window->autoexec_button = navigation_button("Autoexec", "autoexec",
+        "/org/relapse/RelapseGtk/icons/autoexec.png", window);
     window->settings_button = navigation_button("Settings", "settings",
         "/org/relapse/RelapseGtk/icons/settings.png", window);
+    gtk_toggle_button_set_group(window->autoexec_button, window->editor_button);
     gtk_toggle_button_set_group(window->settings_button, window->editor_button);
     gtk_box_append(GTK_BOX(rail), GTK_WIDGET(window->editor_button));
+    gtk_box_append(GTK_BOX(rail), GTK_WIDGET(window->autoexec_button));
     GtkWidget *spacer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_set_vexpand(spacer, TRUE);
     gtk_box_append(GTK_BOX(rail), spacer);
-    GtkWidget *discord = gtk_button_new();
-    gtk_widget_add_css_class(discord, "navigation-button");
-    gtk_widget_add_css_class(discord, "discord-button");
-    gtk_widget_set_tooltip_text(discord, "Join the Relapse Discord");
-    gtk_accessible_update_property(GTK_ACCESSIBLE(discord), GTK_ACCESSIBLE_PROPERTY_LABEL,
-        "Join the Relapse Discord", -1);
-    GtkWidget *discord_icon = gtk_image_new_from_resource("/org/relapse/RelapseGtk/icons/discord.png");
-    gtk_image_set_pixel_size(GTK_IMAGE(discord_icon), 22);
-    gtk_button_set_child(GTK_BUTTON(discord), discord_icon);
-    g_signal_connect(discord, "clicked", G_CALLBACK(open_discord), window);
-    gtk_box_append(GTK_BOX(rail), discord);
+    gtk_box_append(GTK_BOX(rail), link_button("Relapse website",
+        "/org/relapse/RelapseGtk/icons/furfox.png", "https://getrelapse.xyz", window));
+    gtk_box_append(GTK_BOX(rail), link_button("Join the Relapse Discord",
+        "/org/relapse/RelapseGtk/icons/discord.png", "https://discord.gg/getrelapse", window));
     gtk_box_append(GTK_BOX(rail), GTK_WIDGET(window->settings_button));
     gtk_toggle_button_set_active(window->editor_button, TRUE);
     g_signal_connect(window->views, "notify::visible-child-name", G_CALLBACK(view_changed), window);
@@ -446,6 +495,31 @@ static void free_window(gpointer user_data)
 {
     window_destroyed(NULL, user_data);
     g_free(user_data);
+}
+
+static void pointer_moved(GtkEventControllerMotion *controller, double x, double y,
+                          gpointer user_data)
+{
+    (void)controller;
+    (void)y;
+    Window *window = user_data;
+    if (window->stopped || !window->shader_strip)
+        return;
+    GtkWidget *source = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller));
+    graphene_point_t origin = GRAPHENE_POINT_INIT((float)x, (float)y);
+    graphene_point_t point;
+    gboolean ok = gtk_widget_compute_point(source, window->shader_strip, &origin, &point);
+    if (!ok)
+        return;
+    shader_strip_set_light(window->shader_strip, point.x);
+}
+
+static void attach_motion(GtkWidget *widget, Window *window)
+{
+    GtkEventController *motion = gtk_event_controller_motion_new();
+    gtk_event_controller_set_propagation_phase(motion, GTK_PHASE_CAPTURE);
+    g_signal_connect(motion, "motion", G_CALLBACK(pointer_moved), window);
+    gtk_widget_add_controller(widget, motion);
 }
 
 static void toggle_maximize(GtkWindow *window)
@@ -498,7 +572,10 @@ static GtkWidget *create_titlebar(GtkWindow *window)
     GtkWidget *wrap = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_add_css_class(wrap, "titlebar-wrap");
     gtk_box_append(GTK_BOX(wrap), bar);
-    gtk_box_append(GTK_BOX(wrap), shader_strip_new());
+    Window *state = window_data(window);
+    state->shader_strip = shader_strip_new();
+    gtk_box_append(GTK_BOX(wrap), state->shader_strip);
+    attach_motion(wrap, state);
     return wrap;
 }
 
@@ -564,7 +641,8 @@ GtkWindow *window_new(GtkApplication *application, const char *scripts_path,
     gtk_box_append(GTK_BOX(box), state->toolbar);
     GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     GtkWidget *sidebar = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    state->profiles = profile_picker_new(launch_profile, profile_running, window);
+    state->profiles = profile_picker_new(launch_profile, launch_all_profiles,
+        profile_running, window);
     GtkWidget *scripts = scripts_new(scripts_path, script_selected, script_renamed, state);
     gtk_widget_set_vexpand(scripts, TRUE);
     gtk_box_append(GTK_BOX(sidebar), scripts);
@@ -580,14 +658,18 @@ GtkWindow *window_new(GtkApplication *application, const char *scripts_path,
     gtk_widget_set_hexpand(GTK_WIDGET(state->views), TRUE);
     gtk_widget_set_vexpand(GTK_WIDGET(state->views), TRUE);
     gtk_stack_add_titled(state->views, paned, "editor", "Editor");
+    state->autoexec_page = autoexec_new(scripts_path);
+    gtk_stack_add_titled(state->views, state->autoexec_page, "autoexec", "Autoexec");
     EditorSettings defaults = editor_settings_defaults();
     state->settings_page = settings_new(&defaults, editor_settings_changed, restore_tabs_changed,
                                         output_changed, launcher_changed, open_with_changed,
-                                        check_updates_requested, update_current_version(), window);
+                                        profiles_options_changed, check_updates_requested,
+                                        update_current_version(), window);
     gtk_stack_add_titled(state->views, state->settings_page, "settings", "Settings");
     window_set_editor_settings(window, &defaults);
 
     GtkWidget *shell = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    attach_motion(shell, state);
     gtk_box_append(GTK_BOX(shell), create_navigation(state));
     gtk_box_append(GTK_BOX(shell), GTK_WIDGET(state->views));
     gtk_window_set_child(window, shell);

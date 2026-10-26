@@ -8,6 +8,7 @@
 #include "profiles/store.h"
 #include "settings/launcher.h"
 #include "settings/opener.h"
+#include "settings/profiles.h"
 #include "update/check.h"
 
 typedef struct {
@@ -20,6 +21,7 @@ typedef struct {
     guint update_timer;
     gboolean manual_update_check;
     gboolean redirect_output;
+    ProfilesSettings profiles_options;
     GHashTable *launches;
 } App;
 
@@ -73,8 +75,16 @@ static void open_tab_externally(GFile *file, const char *display_name, gpointer 
     g_autoptr(GError) error = NULL;
     if (!opener_settings_load(&opener, &error))
         g_printerr("Could not load script opener preference: %s\n", error->message);
-    if (opener.mode != OPENER_EDITOR && opener.mode != OPENER_NOTHING &&
-        !opener_open(file, &opener, &error)) {
+    if (opener.mode == OPENER_EDITOR || opener.mode == OPENER_NOTHING) {
+        opener_settings_clear(&opener);
+        return;
+    }
+    if (!file) {
+        g_autoptr(GtkAlertDialog) alert = gtk_alert_dialog_new("Please save the script");
+        gtk_alert_dialog_set_detail(alert,
+            "Draft tabs only live in the session cache and have no file to open yet.");
+        gtk_alert_dialog_show(alert, app->window);
+    } else if (!opener_open(file, &opener, &error)) {
         g_autoptr(GtkAlertDialog) alert = gtk_alert_dialog_new("Could not open script externally");
         gtk_alert_dialog_set_detail(alert, error ? error->message : "Unknown error");
         gtk_alert_dialog_show(alert, app->window);
@@ -297,6 +307,51 @@ static gboolean save_launcher(const char *path, GError **error, gpointer user_da
     return TRUE;
 }
 
+static gboolean launcher_configured(const char *path)
+{
+    return path && *path && g_file_test(path, G_FILE_TEST_IS_EXECUTABLE);
+}
+
+static void launcher_scan_finished(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+    App *app = user_data;
+    int choice = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(source), result, NULL);
+    if (choice != 1 || !app->window)
+        return;
+    g_autofree char *path = launcher_find();
+    if (!path) {
+        g_autoptr(GtkAlertDialog) alert = gtk_alert_dialog_new("Could not find relapse-launcher");
+        gtk_alert_dialog_set_detail(alert,
+            "Searched ~/Downloads, then your home folder two levels deep.");
+        gtk_alert_dialog_show(alert, app->window);
+        return;
+    }
+    g_autoptr(GError) error = NULL;
+    if (!save_launcher(path, &error, app)) {
+        g_autoptr(GtkAlertDialog) alert = gtk_alert_dialog_new("Could not save the launcher path");
+        gtk_alert_dialog_set_detail(alert, error ? error->message : "Unknown error");
+        gtk_alert_dialog_show(alert, app->window);
+        return;
+    }
+    window_set_launcher(app->window, app->launcher_path);
+    g_autoptr(GtkAlertDialog) alert = gtk_alert_dialog_new("Relapse launcher found");
+    gtk_alert_dialog_set_detail(alert, path);
+    gtk_alert_dialog_show(alert, app->window);
+}
+
+static void prompt_missing_launcher(App *app)
+{
+    g_autoptr(GtkAlertDialog) alert = gtk_alert_dialog_new("Find the Relapse launcher?");
+    gtk_alert_dialog_set_detail(alert,
+        "No relapse-launcher binary is configured. RelapseGtk can scan ~/Downloads first, "
+        "then your home folder two levels deep, and use the newest copy it finds.");
+    const char *buttons[] = {"Not now", "Scan", NULL};
+    gtk_alert_dialog_set_buttons(alert, buttons);
+    gtk_alert_dialog_set_cancel_button(alert, 0);
+    gtk_alert_dialog_set_default_button(alert, 1);
+    gtk_alert_dialog_choose(alert, app->window, NULL, launcher_scan_finished, app);
+}
+
 static gboolean profile_running(const char *name, gpointer user_data)
 {
     App *app = user_data;
@@ -329,6 +384,20 @@ static void launch_finished(GObject *process, GAsyncResult *result, gpointer use
     g_free(launch);
 }
 
+static GSubprocess *start_profile(App *app, const char *name, GError **error)
+{
+    GSubprocess *process = profile_launch(app->launcher_path, name, error);
+    if (!process)
+        return NULL;
+    g_hash_table_insert(app->launches, g_strdup(name), process);
+    Launch *launch = g_new0(Launch, 1);
+    g_weak_ref_init(&launch->window, app->window);
+    launch->name = g_strdup(name);
+    g_subprocess_wait_check_async(process, NULL, launch_finished, launch);
+    refresh_profiles(app);
+    return process;
+}
+
 static void launch_profile(const char *name, gpointer user_data)
 {
     App *app = user_data;
@@ -346,19 +415,115 @@ static void launch_profile(const char *name, gpointer user_data)
         gtk_alert_dialog_show(alert, app->window);
         return;
     }
-    GSubprocess *process = profile_launch(app->launcher_path, name, &error);
+    GSubprocess *process = start_profile(app, name, &error);
     if (!process) {
         g_autoptr(GtkAlertDialog) alert = gtk_alert_dialog_new("Could not launch Profile %s", name);
         gtk_alert_dialog_set_detail(alert, error->message);
         gtk_alert_dialog_show(alert, app->window);
+    }
+}
+
+typedef struct {
+    App *app;
+    char **names;
+    guint index;
+    guint delay;
+    guint timer;
+} LaunchAll;
+
+static void launch_all_free(LaunchAll *batch)
+{
+    if (batch->timer)
+        g_source_remove(batch->timer);
+    g_strfreev(batch->names);
+    g_free(batch);
+}
+
+static gboolean launch_all_next(gpointer user_data);
+
+static void launch_all_schedule(LaunchAll *batch)
+{
+    batch->timer = g_timeout_add(batch->delay ? batch->delay : 1, launch_all_next, batch);
+}
+
+static gboolean launch_all_next(gpointer user_data)
+{
+    LaunchAll *batch = user_data;
+    App *app = batch->app;
+    batch->timer = 0;
+    if (!app->window) {
+        launch_all_free(batch);
+        return G_SOURCE_REMOVE;
+    }
+    if (!app->launcher_path || !*app->launcher_path) {
+        window_show_settings(app->window);
+        g_autoptr(GtkAlertDialog) alert = gtk_alert_dialog_new("Select a launcher first");
+        gtk_alert_dialog_set_detail(alert,
+            "Choose your launcher executable under Profiles in Settings, then launch again.");
+        gtk_alert_dialog_show(alert, app->window);
+        launch_all_free(batch);
+        return G_SOURCE_REMOVE;
+    }
+    while (batch->names[batch->index]) {
+        const char *name = batch->names[batch->index++];
+        if (profile_running(name, app))
+            continue;
+        g_autoptr(GError) error = NULL;
+        if (!start_profile(app, name, &error)) {
+            g_autoptr(GtkAlertDialog) alert =
+                gtk_alert_dialog_new("Could not launch Profile %s", name);
+            gtk_alert_dialog_set_detail(alert, error ? error->message : "Unknown error.");
+            gtk_alert_dialog_show(alert, app->window);
+            launch_all_free(batch);
+            return G_SOURCE_REMOVE;
+        }
+        launch_all_schedule(batch);
+        return G_SOURCE_REMOVE;
+    }
+    launch_all_free(batch);
+    return G_SOURCE_REMOVE;
+}
+
+static void launch_all_profiles(const char *const *names, gpointer user_data)
+{
+    App *app = user_data;
+    g_autoptr(GPtrArray) pending = g_ptr_array_new_with_free_func(g_free);
+    for (guint i = 0; names[i]; ++i) {
+        if (g_strv_contains((const char *const *)app->profiles_options.excluded, names[i]))
+            continue;
+        g_ptr_array_add(pending, g_strdup(names[i]));
+    }
+    if (!pending->len) {
+        g_autoptr(GtkAlertDialog) alert = gtk_alert_dialog_new("Nothing to launch");
+        gtk_alert_dialog_set_detail(alert,
+            "Every Profile is either skipped in Settings or already running.");
+        gtk_alert_dialog_show(alert, app->window);
         return;
     }
-    g_hash_table_insert(app->launches, g_strdup(name), process);
-    Launch *launch = g_new0(Launch, 1);
-    g_weak_ref_init(&launch->window, app->window);
-    launch->name = g_strdup(name);
-    g_subprocess_wait_check_async(process, NULL, launch_finished, launch);
-    refresh_profiles(app);
+    g_ptr_array_add(pending, NULL);
+    LaunchAll *batch = g_new0(LaunchAll, 1);
+    batch->app = app;
+    batch->delay = (guint)CLAMP(app->profiles_options.delay_ms,
+        PROFILES_LAUNCH_DELAY_MIN, PROFILES_LAUNCH_DELAY_MAX);
+    batch->names = (char **)g_ptr_array_free(g_steal_pointer(&pending), FALSE);
+    launch_all_next(batch);
+}
+
+static gboolean save_profiles_options(gint delay_ms, const char *const *excluded,
+                                      GError **error, gpointer user_data)
+{
+    App *app = user_data;
+    ProfilesSettings next = {
+        .delay_ms = delay_ms,
+        .excluded = g_strdupv((char **)excluded),
+    };
+    if (!profiles_settings_save(&next, error)) {
+        profiles_settings_clear(&next);
+        return FALSE;
+    }
+    profiles_settings_clear(&app->profiles_options);
+    app->profiles_options = next;
+    return TRUE;
 }
 
 static void execute_script(gpointer user_data)
@@ -421,6 +586,7 @@ static void free_app(gpointer user_data)
     g_free(app->scripts_path);
     g_free(app->launcher_path);
     g_free(app->socket_path);
+    profiles_settings_clear(&app->profiles_options);
     g_hash_table_unref(app->launches);
     g_free(app);
 }
@@ -449,8 +615,10 @@ static void activate(GtkApplication *application, gpointer user_data)
         .active_script_changed = update_execute,
         .editor_settings_changed = save_editor_settings, .restore_tabs_changed = save_restore_tabs,
         .output_changed = save_output, .launcher_changed = save_launcher,
-        .open_with_changed = save_open_with, .check_updates = check_updates,
-        .socket_selected = select_socket, .launch_profile = launch_profile, .profile_running = profile_running
+        .open_with_changed = save_open_with, .profiles_changed = save_profiles_options,
+        .check_updates = check_updates,
+        .socket_selected = select_socket, .launch_profile = launch_profile,
+        .launch_all_profiles = launch_all_profiles, .profile_running = profile_running
     };
     app->window = window_new(application, app->scripts_path, &window_handlers, app);
     EditorSettings settings;
@@ -474,6 +642,11 @@ static void activate(GtkApplication *application, gpointer user_data)
         g_printerr("Could not load script opener preference: %s\n", settings_error->message);
     window_set_open_with(app->window, opener.mode, opener.command);
     opener_settings_clear(&opener);
+    g_clear_error(&settings_error);
+    if (!profiles_settings_load(&app->profiles_options, &settings_error))
+        g_printerr("Could not load profile launch settings: %s\n", settings_error->message);
+    window_set_profiles_options(app->window, app->profiles_options.delay_ms,
+        (const char *const *)app->profiles_options.excluded);
     window_set_status(app->window, "Disconnected", "Waiting for a socket to become available.", FALSE);
     g_object_set_data_full(G_OBJECT(app->window), "app", app, free_app);
     g_signal_connect(app->window, "destroy", G_CALLBACK(window_destroyed), app);
@@ -500,6 +673,8 @@ static void activate(GtkApplication *application, gpointer user_data)
     app->discovery = g_timeout_add_seconds(1, refresh_profiles, app);
     app->update_timer = g_timeout_add_seconds(2, check_updates_on_startup, app);
     gtk_window_present(app->window);
+    if (!launcher_configured(app->launcher_path))
+        prompt_missing_launcher(app);
 }
 
 int app_run(int argc, char **argv)

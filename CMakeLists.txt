@@ -12,7 +12,7 @@ pkg_check_modules(GTKSOURCE REQUIRED IMPORTED_TARGET gtksourceview-5>=5.12)
 pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-unix-2.0)
 pkg_check_modules(JSON_GLIB REQUIRED IMPORTED_TARGET json-glib-1.0)
 
-add_library(relapse-settings STATIC src/settings/editor.c src/settings/session.c src/settings/output.c src/settings/store.c src/settings/launcher.c src/settings/opener.c)
+add_library(relapse-settings STATIC src/settings/editor.c src/settings/session.c src/settings/output.c src/settings/store.c src/settings/launcher.c src/settings/opener.c src/settings/profiles.c)
 target_compile_features(relapse-settings PUBLIC c_std_11)
 target_include_directories(relapse-settings PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(relapse-settings PUBLIC PkgConfig::GIO)
@@ -49,7 +49,8 @@ pkg_check_modules(EPOXY REQUIRED IMPORTED_TARGET epoxy)
 
 add_library(relapse-ui STATIC
     src/ui/window.c src/ui/style.c src/ui/editor.c src/ui/scripts.c src/ui/tabs.c src/ui/settings.c
-    src/ui/tab_strip.c src/ui/toolbar.c src/ui/output.c src/ui/search.c src/ui/shader_strip.c src/ui/profiles.c)
+    src/ui/tab_strip.c src/ui/toolbar.c src/ui/output.c src/ui/search.c src/ui/profiles.c src/ui/shader_strip.c
+    src/ui/autoexec.c)
 target_compile_features(relapse-ui PUBLIC c_std_11)
 target_include_directories(relapse-ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(relapse-ui PUBLIC PkgConfig::GTK4 relapse-settings relapse-profiles PRIVATE relapse-state PkgConfig::GTKSOURCE PkgConfig::EPOXY)
@@ -70,6 +71,7 @@ add_custom_command(
         resources/icons/editor.png resources/icons/settings.png
         resources/icons/folder-open.svg resources/icons/play.svg
         resources/icons/save.svg resources/icons/delete.svg resources/icons/discord.png
+        resources/icons/furfox.png resources/icons/autoexec.png
         resources/scripts/session.luau
     VERBATIM)
 

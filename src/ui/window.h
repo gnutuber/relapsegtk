@@ -14,9 +14,11 @@ typedef struct {
     gboolean (*output_changed)(gboolean enabled, GError **error, gpointer user_data);
     gboolean (*launcher_changed)(const char *path, GError **error, gpointer user_data);
     gboolean (*open_with_changed)(OpenerMode mode, const char *command, GError **error, gpointer user_data);
+    gboolean (*profiles_changed)(gint delay_ms, const char *const *excluded, GError **error, gpointer user_data);
     void (*check_updates)(gpointer user_data);
     void (*socket_selected)(const char *path, gpointer user_data);
     void (*launch_profile)(const char *name, gpointer user_data);
+    void (*launch_all_profiles)(const char *const *names, gpointer user_data);
     gboolean (*profile_running)(const char *name, gpointer user_data);
 } WindowHandlers;
 
@@ -32,6 +34,7 @@ void window_append_output(GtkWindow *window, const char *path, const char *level
 void window_set_output_target(GtkWindow *window, const char *path);
 void window_set_launcher(GtkWindow *window, const char *path);
 void window_set_open_with(GtkWindow *window, OpenerMode mode, const char *command);
+void window_set_profiles_options(GtkWindow *window, gint delay_ms, const char *const *excluded);
 void window_show_settings(GtkWindow *window);
 void window_update_profiles(GtkWindow *window, const char *const *names,
                             const char *const *sockets, const char *selected);

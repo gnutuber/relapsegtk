@@ -3,6 +3,8 @@
 #include <glib/gstdio.h>
 #include <unistd.h>
 
+#include "settings/profiles.h"
+
 typedef struct {
     GtkSpinButton *font_size;
     GtkSwitch *word_wrap;
@@ -21,12 +23,23 @@ typedef struct {
     GtkEntry *open_command;
     GtkWidget *open_command_row;
     OpenWithChangedFunc open_with_changed;
+    GtkSpinButton *launch_delay;
+    GtkWidget *exclude_button;
+    GtkLabel *exclude_summary;
+    GtkWindow *exclude_dialog;
+    GtkListBox *exclude_list;
+    char **excluded;
+    char **profiles;
+    ProfilesChangedFunc profiles_changed;
     CheckUpdatesFunc check_updates;
     gboolean stopped;
     gpointer user_data;
 } Settings;
 
 static const int indent_widths[] = {2, 4, 8};
+
+static GtkWidget *label_new(const char *text, const char *style);
+static void exclude_saved(GtkButton *button, gpointer user_data);
 
 void settings_set_launcher(GtkWidget *page, const char *path)
 {
@@ -137,6 +150,219 @@ void settings_set_open_with(GtkWidget *page, OpenerMode mode, const char *comman
     update_open_command_row(state);
 }
 
+static void update_exclude_summary(Settings *state)
+{
+    if (!state->exclude_button)
+        return;
+    gboolean have = state->profiles && state->profiles[0] && !state->stopped;
+    gtk_widget_set_sensitive(state->exclude_button, have);
+    if (!state->exclude_summary)
+        return;
+    if (!have) {
+        gtk_label_set_text(state->exclude_summary, "Create a Profile to skip it here.");
+        return;
+    }
+    g_autoptr(GPtrArray) skipped = g_ptr_array_new();
+    for (guint i = 0; state->profiles[i]; ++i)
+        if (state->excluded &&
+            g_strv_contains((const char *const *)state->excluded, state->profiles[i]))
+            g_ptr_array_add(skipped, state->profiles[i]);
+    if (!skipped->len) {
+        gtk_label_set_text(state->exclude_summary, "Every Profile is launched.");
+        return;
+    }
+    g_ptr_array_add(skipped, NULL);
+    g_autofree char *joined = g_strjoinv(", ", (char **)skipped->pdata);
+    g_autofree char *text = g_strdup_printf("Skipped: %s", joined);
+    gtk_label_set_text(state->exclude_summary, text);
+}
+
+static void commit_profiles(Settings *state)
+{
+    if (!state->profiles_changed)
+        return;
+    g_autoptr(GError) error = NULL;
+    if (!state->profiles_changed(gtk_spin_button_get_value_as_int(state->launch_delay),
+            (const char *const *)state->excluded, &error, state->user_data) && error) {
+        g_autoptr(GtkAlertDialog) alert = gtk_alert_dialog_new("Could not save settings");
+        gtk_alert_dialog_set_detail(alert, error->message);
+        gtk_alert_dialog_show(alert, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(state->launch_delay))));
+    }
+}
+
+static GtkWidget *exclude_row_new(const char *name, gboolean skipped)
+{
+    GtkWidget *row = gtk_list_box_row_new();
+    gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(row), FALSE);
+    gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), FALSE);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    GtkWidget *label = label_new(name, NULL);
+    gtk_widget_set_hexpand(label, TRUE);
+    gtk_widget_set_valign(label, GTK_ALIGN_CENTER);
+    gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+    gtk_box_append(GTK_BOX(box), label);
+    GtkWidget *launch = gtk_switch_new();
+    gtk_widget_add_css_class(launch, "exclude-profile");
+    gtk_widget_set_valign(launch, GTK_ALIGN_CENTER);
+    gtk_switch_set_active(GTK_SWITCH(launch), !skipped);
+    g_object_set_data_full(G_OBJECT(launch), "profile-name", g_strdup(name), g_free);
+    g_autofree char *accessible = g_strdup_printf("Launch %s with Launch all", name);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(launch), GTK_ACCESSIBLE_PROPERTY_LABEL, accessible, -1);
+    gtk_widget_set_tooltip_text(launch, "Include this Profile when Launch all runs");
+    gtk_box_append(GTK_BOX(box), launch);
+    gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
+    return row;
+}
+
+static void exclude_saved(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    Settings *state = user_data;
+    g_autoptr(GPtrArray) skipped = g_ptr_array_new_with_free_func(g_free);
+    for (GtkWidget *row = state->exclude_list ? gtk_widget_get_first_child(GTK_WIDGET(state->exclude_list)) : NULL;
+         row; row = gtk_widget_get_next_sibling(row)) {
+        GtkWidget *box = gtk_list_box_row_get_child(GTK_LIST_BOX_ROW(row));
+        GtkWidget *launch = box ? gtk_widget_get_last_child(box) : NULL;
+        if (!launch || !GTK_IS_SWITCH(launch) || gtk_switch_get_active(GTK_SWITCH(launch)))
+            continue;
+        const char *name = g_object_get_data(G_OBJECT(launch), "profile-name");
+        if (name)
+            g_ptr_array_add(skipped, g_strdup(name));
+    }
+    g_ptr_array_add(skipped, NULL);
+    g_strfreev(state->excluded);
+    state->excluded = (char **)g_ptr_array_free(g_steal_pointer(&skipped), FALSE);
+    update_exclude_summary(state);
+    commit_profiles(state);
+    if (state->exclude_dialog)
+        gtk_window_destroy(state->exclude_dialog);
+}
+
+static gboolean exclude_dialog_key(GtkEventControllerKey *controller, guint keyval,
+                                   guint keycode, GdkModifierType modifiers, gpointer user_data)
+{
+    (void)controller; (void)keycode; (void)modifiers;
+    if (keyval != GDK_KEY_Escape) return FALSE;
+    gtk_window_close(GTK_WINDOW(user_data));
+    return TRUE;
+}
+
+static void exclude_dialog_closed(GtkWidget *widget, gpointer user_data)
+{
+    Settings *state = user_data;
+    if (state->exclude_dialog == GTK_WINDOW(widget))
+        state->exclude_dialog = NULL;
+    state->exclude_list = NULL;
+}
+
+static void open_exclude_dialog(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    Settings *state = user_data;
+    if (state->stopped || !state->profiles || !state->profiles[0])
+        return;
+    if (state->exclude_dialog) {
+        gtk_window_present(state->exclude_dialog);
+        return;
+    }
+    GtkWindow *window = GTK_WINDOW(gtk_window_new());
+    gtk_window_set_title(window, "Skip when launching all");
+    GtkWindow *parent = GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(button)));
+    if (parent)
+        gtk_window_set_transient_for(window, parent);
+    gtk_window_set_modal(window, TRUE);
+    gtk_window_set_hide_on_close(window, TRUE);
+    gtk_window_set_default_size(window, 340, 380);
+    gtk_widget_add_css_class(GTK_WIDGET(window), "relapse-ui");
+    gtk_widget_add_css_class(GTK_WIDGET(window), "exclude-dialog");
+    GtkWidget *header = gtk_header_bar_new();
+    gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(header), FALSE);
+    GtkWidget *title = gtk_label_new("Skip when launching all");
+    gtk_widget_add_css_class(title, "title");
+    gtk_header_bar_set_title_widget(GTK_HEADER_BAR(header), title);
+    GtkWidget *close = gtk_button_new_with_label("×");
+    gtk_widget_add_css_class(close, "window-control");
+    gtk_widget_set_tooltip_text(close, "Close without saving");
+    g_signal_connect_swapped(close, "clicked", G_CALLBACK(gtk_window_close), window);
+    gtk_header_bar_pack_end(GTK_HEADER_BAR(header), close);
+    gtk_window_set_titlebar(window, header);
+    GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_add_css_class(content, "profiles-content");
+    GtkWidget *hint = label_new("Launch all starts every Profile whose switch is on.",
+        "settings-description");
+    gtk_label_set_wrap(GTK_LABEL(hint), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(hint), 40);
+    gtk_box_append(GTK_BOX(content), hint);
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_widget_set_vexpand(scroll, TRUE);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER,
+        GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroll), 140);
+    GtkWidget *list = gtk_list_box_new();
+    gtk_widget_add_css_class(list, "profiles-list");
+    gtk_list_box_set_selection_mode(GTK_LIST_BOX(list), GTK_SELECTION_NONE);
+    for (guint i = 0; state->profiles[i]; ++i) {
+        gboolean skipped = state->excluded &&
+            g_strv_contains((const char *const *)state->excluded, state->profiles[i]);
+        gtk_list_box_append(GTK_LIST_BOX(list), exclude_row_new(state->profiles[i], skipped));
+    }
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), list);
+    gtk_box_append(GTK_BOX(content), scroll);
+    GtkWidget *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_halign(actions, GTK_ALIGN_END);
+    GtkWidget *cancel = gtk_button_new_with_label("Cancel");
+    g_signal_connect_swapped(cancel, "clicked", G_CALLBACK(gtk_window_close), window);
+    GtkWidget *save = gtk_button_new_with_label("Save");
+    gtk_widget_add_css_class(save, "save-excluded");
+    g_signal_connect(save, "clicked", G_CALLBACK(exclude_saved), state);
+    gtk_box_append(GTK_BOX(actions), cancel);
+    gtk_box_append(GTK_BOX(actions), save);
+    gtk_box_append(GTK_BOX(content), actions);
+    GtkEventController *keys = gtk_event_controller_key_new();
+    g_signal_connect(keys, "key-pressed", G_CALLBACK(exclude_dialog_key), window);
+    gtk_widget_add_controller(GTK_WIDGET(window), keys);
+    gtk_window_set_child(window, content);
+    g_signal_connect(window, "destroy", G_CALLBACK(exclude_dialog_closed), state);
+    state->exclude_dialog = window;
+    state->exclude_list = GTK_LIST_BOX(list);
+    gtk_window_present(window);
+}
+
+static void launch_delay_changed(GtkWidget *widget, gpointer user_data)
+{
+    (void)widget;
+    Settings *state = user_data;
+    if (!state->updating)
+        commit_profiles(state);
+}
+
+void settings_set_profiles_options(GtkWidget *page, gint delay_ms, const char *const *excluded)
+{
+    Settings *state = g_object_get_data(G_OBJECT(page), "settings");
+    state->updating = TRUE;
+    gtk_spin_button_set_value(state->launch_delay,
+        CLAMP(delay_ms, PROFILES_LAUNCH_DELAY_MIN, PROFILES_LAUNCH_DELAY_MAX));
+    g_strfreev(state->excluded);
+    state->excluded = g_strdupv((char **)excluded);
+    if (!state->excluded)
+        state->excluded = g_new0(char *, 1);
+    state->updating = FALSE;
+    update_exclude_summary(state);
+}
+
+void settings_set_profiles(GtkWidget *page, const char *const *names)
+{
+    Settings *state = g_object_get_data(G_OBJECT(page), "settings");
+    if (state->stopped)
+        return;
+    if (state->profiles && names &&
+        g_strv_equal((const char *const *)state->profiles, names))
+        return;
+    g_strfreev(state->profiles);
+    state->profiles = g_strdupv((char **)names);
+    update_exclude_summary(state);
+}
+
 void settings_check_updates(GtkWidget *page)
 {
     Settings *state = g_object_get_data(G_OBJECT(page), "settings");
@@ -156,6 +382,13 @@ static void free_settings(gpointer user_data)
     Settings *state = user_data;
     if (state->picker) g_cancellable_cancel(state->picker);
     g_clear_object(&state->picker);
+    if (state->exclude_dialog) {
+        gtk_window_destroy(state->exclude_dialog);
+        state->exclude_dialog = NULL;
+        state->exclude_list = NULL;
+    }
+    g_strfreev(state->excluded);
+    g_strfreev(state->profiles);
     g_free(state);
 }
 
@@ -276,7 +509,8 @@ static GtkWidget *section_new(GtkWidget *column, const char *title, GtkWidget **
 GtkWidget *settings_new(const EditorSettings *settings, SettingsChangedFunc changed,
                        RestoreTabsChangedFunc restore_callback, OutputChangedFunc output_callback,
                        LauncherChangedFunc launcher_callback, OpenWithChangedFunc open_with_callback,
-                       CheckUpdatesFunc check_updates, const char *version, gpointer user_data)
+                       ProfilesChangedFunc profiles_callback, CheckUpdatesFunc check_updates,
+                       const char *version, gpointer user_data)
 {
     Settings *state = g_new0(Settings, 1);
     state->changed = changed;
@@ -284,6 +518,7 @@ GtkWidget *settings_new(const EditorSettings *settings, SettingsChangedFunc chan
     state->output_changed = output_callback;
     state->launcher_changed = launcher_callback;
     state->open_with_changed = open_with_callback;
+    state->profiles_changed = profiles_callback;
     state->check_updates = check_updates;
     state->user_data = user_data;
     GtkWidget *page = gtk_scrolled_window_new();
@@ -383,6 +618,48 @@ GtkWidget *settings_new(const EditorSettings *settings, SettingsChangedFunc chan
     gtk_box_append(GTK_BOX(launcher), GTK_WIDGET(state->launcher_path));
     add_row(launcher_group, "Launcher", "Executable used to launch Profiles", launcher);
     g_signal_connect(state->launcher_button, "clicked", G_CALLBACK(select_launcher), page);
+
+    GtkWidget *delay = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    state->launch_delay = GTK_SPIN_BUTTON(gtk_spin_button_new_with_range(
+        PROFILES_LAUNCH_DELAY_MIN, PROFILES_LAUNCH_DELAY_MAX, 100));
+    gtk_widget_add_css_class(GTK_WIDGET(state->launch_delay), "launch-delay");
+    gtk_spin_button_set_numeric(state->launch_delay, TRUE);
+    gtk_spin_button_set_update_policy(state->launch_delay, GTK_UPDATE_IF_VALID);
+    gtk_editable_set_width_chars(GTK_EDITABLE(state->launch_delay), 5);
+    gtk_editable_set_alignment(GTK_EDITABLE(state->launch_delay), 1.0);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(state->launch_delay),
+        GTK_ACCESSIBLE_PROPERTY_LABEL, "Delay between launches in milliseconds", -1);
+    gtk_box_append(GTK_BOX(delay), GTK_WIDGET(state->launch_delay));
+    gtk_box_append(GTK_BOX(delay), label_new("ms", "settings-description"));
+    add_row(launcher_group, "Launch all delay", "Pause between each Profile launch", delay);
+    g_signal_connect(state->launch_delay, "value-changed", G_CALLBACK(launch_delay_changed), state);
+
+    GtkWidget *exclude_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 20);
+    gtk_widget_add_css_class(exclude_row, "settings-row");
+    GtkWidget *exclude_labels = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
+    gtk_widget_set_hexpand(exclude_labels, TRUE);
+    gtk_widget_set_valign(exclude_labels, GTK_ALIGN_CENTER);
+    gtk_box_append(GTK_BOX(exclude_labels), label_new("Skip when launching all", "settings-label"));
+    state->exclude_summary = GTK_LABEL(label_new("Create a Profile to skip it here.",
+        "settings-description"));
+    gtk_label_set_wrap(state->exclude_summary, TRUE);
+    gtk_label_set_max_width_chars(state->exclude_summary, 33);
+    gtk_label_set_ellipsize(state->exclude_summary, PANGO_ELLIPSIZE_END);
+    gtk_box_append(GTK_BOX(exclude_labels), GTK_WIDGET(state->exclude_summary));
+    gtk_box_append(GTK_BOX(exclude_row), exclude_labels);
+    GtkWidget *exclude_slot = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_size_request(exclude_slot, 132, -1);
+    gtk_widget_set_valign(exclude_slot, GTK_ALIGN_CENTER);
+    state->exclude_button = gtk_button_new_with_label("Configure");
+    gtk_widget_add_css_class(state->exclude_button, "configure-excluded");
+    gtk_widget_set_halign(state->exclude_button, GTK_ALIGN_END);
+    gtk_widget_set_sensitive(state->exclude_button, FALSE);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(state->exclude_button),
+        GTK_ACCESSIBLE_PROPERTY_LABEL, "Choose which Profiles Launch all starts", -1);
+    gtk_box_append(GTK_BOX(exclude_slot), state->exclude_button);
+    gtk_box_append(GTK_BOX(exclude_row), exclude_slot);
+    g_signal_connect(state->exclude_button, "clicked", G_CALLBACK(open_exclude_dialog), state);
+    gtk_box_append(GTK_BOX(launcher_group), exclude_row);
 
     GtkWidget *scripts_group = NULL;
     section_new(right, "Scripts", &scripts_group);

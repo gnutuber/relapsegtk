@@ -1,9 +1,12 @@
 #include "tabs.h"
 
+#include "autoexec.h"
 #include "editor.h"
 #include "tab_strip.h"
 #include "search.h"
 #include "state/session.h"
+#include <errno.h>
+#include <glib/gstdio.h>
 #include <string.h>
 
 enum { MaxScriptBytes = 8 * 1024 * 1024 };
@@ -20,6 +23,7 @@ typedef struct {
     gpointer user_data;
     GFile *scripts_dir;
     EditorSettings editor_settings;
+    OpenerMode open_mode;
     guint next_untitled;
     guint8 name_order[G_N_ELEMENTS(default_script_names)];
     guint name_cursor;
@@ -39,7 +43,11 @@ typedef struct {
     GtkWidget *editor;
     GtkWidget *search;
     GtkWidget *tab;
+    GtkWidget *title;
+    GtkButton *select;
     GtkLabel *label;
+    GtkWidget *name_entry;
+    GtkPopover *menu;
     GtkLabel *message;
     GFile *file;
     char *name;
@@ -49,6 +57,7 @@ typedef struct {
     PendingSave *saving;
     GCancellable *close_prompt;
     gboolean ready;
+    gboolean renaming;
     char *recovery_text;
     int restore_cursor;
 } Script;
@@ -163,6 +172,92 @@ static void update_label(GtkTextBuffer *buffer, GtkWidget *page)
         script->load ? " …" : gtk_text_buffer_get_modified(buffer) ? " •" : "");
     gtk_label_set_text(script->label, label);
     schedule_session(script->notebook, FALSE);
+}
+
+static void script_error(Script *script, const char *title, const char *detail)
+{
+    g_autoptr(GtkAlertDialog) alert = gtk_alert_dialog_new("%s", title);
+    gtk_alert_dialog_set_detail(alert, detail ? detail : "Unknown error.");
+    GtkRoot *root = gtk_widget_get_root(script->page);
+    gtk_alert_dialog_show(alert, GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL);
+}
+
+static void finish_rename(Script *script)
+{
+    if (!script->renaming)
+        return;
+    script->renaming = FALSE;
+    gtk_stack_set_visible_child_name(GTK_STACK(script->title), "label");
+}
+
+static void start_rename(Script *script)
+{
+    if (script->renaming || script->load || script->save || script->close_prompt)
+        return;
+    gtk_editable_set_text(GTK_EDITABLE(script->name_entry), script->name);
+    gtk_stack_set_visible_child_name(GTK_STACK(script->title), "rename");
+    script->renaming = TRUE;
+    gtk_widget_grab_focus(script->name_entry);
+    const char *extension = strrchr(script->name, '.');
+    int end = extension && extension != script->name
+        ? (int)g_utf8_pointer_to_offset(script->name, extension) : -1;
+    gtk_editable_select_region(GTK_EDITABLE(script->name_entry), 0, end);
+}
+
+static void rename_activated(GtkEntry *entry, Script *script)
+{
+    if (!script->renaming)
+        return;
+    g_autofree char *name = g_strdup(gtk_editable_get_text(GTK_EDITABLE(entry)));
+    g_strstrip(name);
+    if (!*name || g_str_equal(name, ".") || g_str_equal(name, "..") || strchr(name, '/')) {
+        script_error(script, "Could not rename script", "Enter a filename without slashes.");
+        return;
+    }
+    if (g_str_equal(name, script->name)) {
+        finish_rename(script);
+        return;
+    }
+    if (script->file) {
+        g_autoptr(GError) error = NULL;
+        GFile *renamed = g_file_set_display_name(script->file, name, NULL, &error);
+        if (!renamed) {
+            script_error(script, "Could not rename script", error->message);
+            return;
+        }
+        g_set_object(&script->file, renamed);
+        g_object_unref(renamed);
+        g_autofree char *basename = g_file_get_basename(script->file);
+        g_free(script->name);
+        script->name = basename ? g_filename_display_name(basename) : g_strdup("script.luau");
+        g_autofree char *path = g_file_get_parse_name(script->file);
+        gtk_widget_set_tooltip_text(script->tab, path);
+    } else {
+        g_free(script->name);
+        script->name = g_strdup(name);
+    }
+    update_label(gtk_text_view_get_buffer(GTK_TEXT_VIEW(script->editor)), script->page);
+    notify_changed(script->notebook);
+    finish_rename(script);
+}
+
+static gboolean rename_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode,
+                                   GdkModifierType modifiers, Script *script)
+{
+    (void)controller;
+    (void)keycode;
+    (void)modifiers;
+    if (!script->renaming || keyval != GDK_KEY_Escape)
+        return FALSE;
+    finish_rename(script);
+    gtk_widget_grab_focus(GTK_WIDGET(script->select));
+    return TRUE;
+}
+
+static void rename_focus_left(GtkEventControllerFocus *controller, Script *script)
+{
+    (void)controller;
+    finish_rename(script);
 }
 
 static void buffer_changed(GtkTextBuffer *buffer, GtkWidget *page)
@@ -287,6 +382,11 @@ static void free_script(gpointer data)
 {
     Script *script = data;
     stop_script(script);
+    if (script->menu) {
+        gtk_popover_popdown(script->menu);
+        gtk_widget_unparent(GTK_WIDGET(script->menu));
+        script->menu = NULL;
+    }
     g_clear_object(&script->load);
     g_clear_object(&script->save);
     g_clear_object(&script->save_file);
@@ -542,13 +642,306 @@ static void close_tab(GtkButton *button, GtkWidget *page)
                             confirm_close, pending_page_new(script));
 }
 
+static gboolean has_script_extension(const char *name)
+{
+    const char *dot = strrchr(name, '.');
+    return dot && dot != name &&
+        (g_ascii_strcasecmp(dot, ".lua") == 0 || g_ascii_strcasecmp(dot, ".luau") == 0 ||
+         g_ascii_strcasecmp(dot, ".txt") == 0);
+}
+
+static GFile *unique_script_file(GtkNotebook *notebook, const char *filename)
+{
+    Tabs *tabs = g_object_get_data(G_OBJECT(notebook), "tabs");
+    g_autoptr(GFile) direct = g_file_get_child(tabs->scripts_dir, filename);
+    if (!g_file_query_exists(direct, NULL))
+        return g_steal_pointer(&direct);
+    const char *dot = strrchr(filename, '.');
+    g_autofree char *stem = dot ? g_strndup(filename, (gsize)(dot - filename)) : g_strdup(filename);
+    const char *extension = dot ? dot : "";
+    for (int i = 1; i < 1000; ++i) {
+        g_autofree char *name = i == 1
+            ? g_strdup_printf("%s copy%s", stem, extension)
+            : g_strdup_printf("%s copy %d%s", stem, i, extension);
+        g_autoptr(GFile) file = g_file_get_child(tabs->scripts_dir, name);
+        if (!g_file_query_exists(file, NULL))
+            return g_steal_pointer(&file);
+    }
+    return NULL;
+}
+
+static void adopt_file(Script *script, GFile *file)
+{
+    g_set_object(&script->file, file);
+    g_autofree char *basename = g_file_get_basename(file);
+    g_free(script->name);
+    script->name = basename ? g_filename_display_name(basename) : g_strdup("script.luau");
+    g_autofree char *path = g_file_get_parse_name(file);
+    gtk_widget_set_tooltip_text(script->tab, path);
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(script->editor));
+    gtk_text_buffer_set_modified(buffer, FALSE);
+    update_label(buffer, script->page);
+    notify_changed(script->notebook);
+}
+
+static void add_to_autoexec(Script *script)
+{
+    if (script->save || script->load) {
+        script_error(script, "Could not add this script to Autoexec",
+            "This script is busy. Try again when it finishes.");
+        return;
+    }
+    g_autoptr(GError) error = NULL;
+    GFile *source = script->file;
+    g_autoptr(GFile) saved = NULL;
+    if (!source) {
+        if (!script->ready) {
+            script_error(script, "Could not add this script to Autoexec",
+                "The script is still loading.");
+            return;
+        }
+        g_autofree char *filename = has_script_extension(script->name)
+            ? g_strdup(script->name) : g_strconcat(script->name, ".luau", NULL);
+        g_autoptr(GFile) target = unique_script_file(script->notebook, filename);
+        if (!target) {
+            script_error(script, "Could not add this script to Autoexec",
+                "Could not find a free filename in your Scripts folder.");
+            return;
+        }
+        g_autoptr(GBytes) contents = script_contents(script);
+        gsize size = 0;
+        const char *data = g_bytes_get_data(contents, &size);
+        if (!g_file_replace_contents(target, data, size, NULL, FALSE, G_FILE_CREATE_NONE,
+                                     NULL, NULL, &error)) {
+            script_error(script, "Could not save the draft", error->message);
+            return;
+        }
+        adopt_file(script, target);
+        saved = g_steal_pointer(&target);
+        source = saved;
+    }
+    g_autofree char *directory = autoexec_directory_path();
+    if (g_mkdir_with_parents(directory, 0700) != 0) {
+        g_autofree char *detail = g_strdup_printf("Could not create %s: %s",
+            directory, g_strerror(errno));
+        script_error(script, "Could not add this script to Autoexec", detail);
+        return;
+    }
+    g_autofree char *basename = g_file_get_basename(source);
+    if (!basename) {
+        script_error(script, "Could not add this script to Autoexec",
+            "The script has no filename.");
+        return;
+    }
+    g_autofree char *destination = g_build_filename(directory, basename, NULL);
+    g_autoptr(GFile) target = g_file_new_for_path(destination);
+    if (!g_file_copy(source, target, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL, &error))
+        script_error(script, "Could not add this script to Autoexec", error->message);
+}
+
+static void delete_finished(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+    (void)user_data;
+    g_autoptr(GError) error = NULL;
+    if (!g_file_delete_finish(G_FILE(source), result, &error) &&
+        !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+        g_printerr("Could not delete script: %s\n", error ? error->message : "unknown");
+}
+
+static void delete_confirmed(GObject *dialog, GAsyncResult *result, gpointer user_data)
+{
+    PendingPage *pending = user_data;
+    int choice = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(dialog), result, NULL);
+    g_autoptr(GtkNotebook) notebook = g_weak_ref_get(&pending->notebook);
+    g_autoptr(GtkWidget) page = g_weak_ref_get(&pending->page);
+    Script *script = find_script(notebook, page);
+    if (script && choice == 1) {
+        GFile *file = script->file ? g_object_ref(script->file) : NULL;
+        remove_script(script);
+        if (file) {
+            g_file_delete_async(file, G_PRIORITY_DEFAULT, NULL, delete_finished, NULL);
+            g_object_unref(file);
+        }
+    }
+    pending_page_free(pending);
+}
+
+static void ask_delete_script(Script *script)
+{
+    g_autoptr(GtkAlertDialog) alert = gtk_alert_dialog_new("Delete %s?", script->name);
+    gtk_alert_dialog_set_detail(alert, script->file
+        ? "This will remove the file from disk."
+        : "This draft only exists in this window.");
+    const char *buttons[] = {"Cancel", "Delete", NULL};
+    gtk_alert_dialog_set_buttons(alert, buttons);
+    gtk_alert_dialog_set_cancel_button(alert, 0);
+    gtk_alert_dialog_set_default_button(alert, 0);
+    GtkRoot *root = gtk_widget_get_root(script->page);
+    if (!GTK_IS_WINDOW(root))
+        return;
+    gtk_alert_dialog_choose(alert, GTK_WINDOW(root), NULL, delete_confirmed, pending_page_new(script));
+}
+
+static void browse_script_file(Script *script)
+{
+    if (!script->file)
+        return;
+    g_autofree char *path = g_file_get_path(script->file);
+    if (!path) {
+        script_error(script, "Could not browse the script folder",
+            "Only local scripts can be shown in a file manager.");
+        return;
+    }
+    g_autofree char *directory = g_path_get_dirname(path);
+    g_autoptr(GFile) folder = g_file_new_for_path(directory);
+    g_autofree char *uri = g_file_get_uri(folder);
+    g_autoptr(GError) error = NULL;
+    if (!g_app_info_launch_default_for_uri(uri, NULL, &error))
+        script_error(script, "Could not open the script folder", error->message);
+}
+
+static void tab_add_autoexec(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action;
+    (void)parameter;
+    Script *script = user_data;
+    if (script->menu)
+        gtk_popover_popdown(script->menu);
+    add_to_autoexec(script);
+}
+
+static void tab_rename_requested(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action;
+    (void)parameter;
+    Script *script = user_data;
+    if (script->menu)
+        gtk_popover_popdown(script->menu);
+    start_rename(script);
+}
+
+static void tab_delete_requested(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action;
+    (void)parameter;
+    Script *script = user_data;
+    if (script->menu)
+        gtk_popover_popdown(script->menu);
+    ask_delete_script(script);
+}
+
+static gboolean script_modified(Script *script)
+{
+    if (!script->ready || script->load)
+        return FALSE;
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(script->editor));
+    return gtk_text_buffer_get_modified(buffer) ||
+        (!script->file && gtk_text_buffer_get_char_count(buffer) > 0);
+}
+
+static void tab_save_requested(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action;
+    (void)parameter;
+    Script *script = user_data;
+    if (script->menu)
+        gtk_popover_popdown(script->menu);
+    if (!script->ready || script->close_prompt)
+        return;
+    gtk_notebook_set_current_page(script->notebook,
+        gtk_notebook_page_num(script->notebook, script->page));
+    tabs_save(GTK_WIDGET(script->notebook));
+}
+
+static void tab_browse_requested(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action;
+    (void)parameter;
+    Script *script = user_data;
+    if (script->menu)
+        gtk_popover_popdown(script->menu);
+    browse_script_file(script);
+}
+
+static void show_tab_menu(Script *script, double x, double y)
+{
+    if (script->renaming)
+        return;
+    gtk_notebook_set_current_page(script->notebook,
+        gtk_notebook_page_num(script->notebook, script->page));
+    if (!script->menu) {
+        script->menu = GTK_POPOVER(gtk_popover_new());
+        gtk_popover_set_has_arrow(script->menu, FALSE);
+        gtk_widget_set_parent(GTK_WIDGET(script->menu), script->tab);
+        gtk_widget_add_css_class(GTK_WIDGET(script->menu), "script-menu");
+        GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        const struct {
+            const char *label;
+            const char *action;
+            const char *key;
+        } items[] = {
+            {"Add to Autoexec", "tab.add-autoexec", NULL},
+            {"Save", "tab.save", "save"},
+            {"Rename", "tab.rename", NULL},
+            {"Delete", "tab.delete", NULL},
+            {"Browse file", "tab.browse", "browse"},
+        };
+        for (guint i = 0; i < G_N_ELEMENTS(items); ++i) {
+            GtkWidget *button = gtk_button_new_with_label(items[i].label);
+            gtk_widget_add_css_class(button, "flat");
+            gtk_widget_add_css_class(button, "menu-item");
+            gtk_widget_set_halign(button, GTK_ALIGN_FILL);
+            gtk_button_set_has_frame(GTK_BUTTON(button), FALSE);
+            gtk_label_set_xalign(GTK_LABEL(gtk_button_get_child(GTK_BUTTON(button))), 0);
+            gtk_actionable_set_action_name(GTK_ACTIONABLE(button), items[i].action);
+            if (items[i].key)
+                g_object_set_data(G_OBJECT(box), items[i].key, button);
+            gtk_box_append(GTK_BOX(box), button);
+        }
+        gtk_popover_set_child(script->menu, box);
+    }
+    GtkWidget *save = g_object_get_data(G_OBJECT(gtk_popover_get_child(script->menu)), "save");
+    if (save)
+        gtk_widget_set_visible(save, script_modified(script));
+    GtkWidget *browse = g_object_get_data(G_OBJECT(gtk_popover_get_child(script->menu)), "browse");
+    if (browse)
+        gtk_widget_set_visible(browse, script->file != NULL);
+    GdkRectangle point = {(int)x, (int)y, 1, 1};
+    gtk_popover_set_pointing_to(script->menu, &point);
+    gtk_popover_present(script->menu);
+    gtk_popover_popup(script->menu);
+}
+
+static void tab_right_clicked(GtkGestureClick *gesture, int presses, double x, double y,
+                              Script *script)
+{
+    if (presses != 1 || script->renaming)
+        return;
+    gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+    show_tab_menu(script, x, y);
+}
+
+static void tab_double_clicked(GtkGestureClick *gesture, int presses, double x, double y,
+                               Script *script)
+{
+    (void)x;
+    (void)y;
+    if (presses != 2)
+        return;
+    Tabs *tabs = g_object_get_data(G_OBJECT(script->notebook), "tabs");
+    if (!tabs || tabs->stopped || tabs->open_mode != OPENER_NOTHING)
+        return;
+    gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+    start_rename(script);
+}
+
 static void select_script(GtkButton *button, gpointer data)
 {
     (void)button;
     Script *script = data;
     gtk_notebook_set_current_page(script->notebook, gtk_notebook_page_num(script->notebook, script->page));
     Tabs *tabs = g_object_get_data(G_OBJECT(script->notebook), "tabs");
-    if (tabs->open_requested && script->file)
+    if (tabs->open_requested)
         tabs->open_requested(script->file, script->name, tabs->user_data);
 }
 
@@ -611,10 +1004,59 @@ static Script *new_script(GtkNotebook *notebook, GFile *file, const char *name, 
     script->tab = g_object_ref_sink(tab);
     gtk_widget_add_css_class(tab, "script-tab");
     g_object_set_data(G_OBJECT(tab), "page", script->page);
+    script->title = gtk_stack_new();
+    gtk_stack_set_hhomogeneous(GTK_STACK(script->title), FALSE);
+    gtk_stack_set_vhomogeneous(GTK_STACK(script->title), FALSE);
+    gtk_widget_set_valign(script->title, GTK_ALIGN_CENTER);
     GtkWidget *select = gtk_button_new();
+    script->select = GTK_BUTTON(select);
     gtk_widget_add_css_class(select, "tab-select");
-    gtk_box_append(GTK_BOX(tab), select);
     g_signal_connect(select, "clicked", G_CALLBACK(select_script), script);
+    gtk_stack_add_named(GTK_STACK(script->title), select, "label");
+    script->name_entry = gtk_entry_new();
+    gtk_widget_add_css_class(script->name_entry, "script-rename");
+    gtk_editable_set_width_chars(GTK_EDITABLE(script->name_entry), 10);
+    gtk_widget_set_valign(script->name_entry, GTK_ALIGN_CENTER);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(script->name_entry),
+        GTK_ACCESSIBLE_PROPERTY_LABEL, "Script name", -1);
+    g_signal_connect(script->name_entry, "activate", G_CALLBACK(rename_activated), script);
+    GtkEventController *rename_keys = gtk_event_controller_key_new();
+    g_signal_connect(rename_keys, "key-pressed", G_CALLBACK(rename_key_pressed), script);
+    gtk_widget_add_controller(script->name_entry, rename_keys);
+    GtkEventController *rename_focus = gtk_event_controller_focus_new();
+    g_signal_connect(rename_focus, "leave", G_CALLBACK(rename_focus_left), script);
+    gtk_widget_add_controller(script->name_entry, rename_focus);
+    gtk_stack_add_named(GTK_STACK(script->title), script->name_entry, "rename");
+    gtk_box_append(GTK_BOX(tab), script->title);
+    GtkGesture *right_click = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(right_click), GDK_BUTTON_SECONDARY);
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(right_click), GTK_PHASE_CAPTURE);
+    g_signal_connect(right_click, "pressed", G_CALLBACK(tab_right_clicked), script);
+    gtk_widget_add_controller(tab, GTK_EVENT_CONTROLLER(right_click));
+    GtkGesture *double_click = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(double_click), GDK_BUTTON_PRIMARY);
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(double_click), GTK_PHASE_CAPTURE);
+    g_signal_connect(double_click, "pressed", G_CALLBACK(tab_double_clicked), script);
+    gtk_widget_add_controller(tab, GTK_EVENT_CONTROLLER(double_click));
+    GSimpleActionGroup *actions = g_simple_action_group_new();
+    const struct {
+        const char *name;
+        GCallback callback;
+    } tab_actions[] = {
+        {"add-autoexec", G_CALLBACK(tab_add_autoexec)},
+        {"save", G_CALLBACK(tab_save_requested)},
+        {"rename", G_CALLBACK(tab_rename_requested)},
+        {"delete", G_CALLBACK(tab_delete_requested)},
+        {"browse", G_CALLBACK(tab_browse_requested)},
+    };
+    for (guint i = 0; i < G_N_ELEMENTS(tab_actions); ++i) {
+        GSimpleAction *action = g_simple_action_new(tab_actions[i].name, NULL);
+        g_signal_connect(action, "activate", tab_actions[i].callback, script);
+        g_action_map_add_action(G_ACTION_MAP(actions), G_ACTION(action));
+        g_object_unref(action);
+    }
+    gtk_widget_insert_action_group(tab, "tab", G_ACTION_GROUP(actions));
+    g_object_unref(actions);
     GtkDragSource *drag = gtk_drag_source_new();
     gtk_drag_source_set_actions(drag, GDK_ACTION_MOVE);
     g_signal_connect(drag, "prepare", G_CALLBACK(drag_tab), script);
@@ -927,6 +1369,14 @@ void tabs_set_editor_settings(GtkWidget *tabs, const EditorSettings *settings)
         Script *script = g_object_get_data(G_OBJECT(gtk_notebook_get_nth_page(book, i)), "script");
         editor_apply_settings(script->editor, settings);
     }
+}
+
+void tabs_set_open_with(GtkWidget *tabs, OpenerMode mode)
+{
+    Tabs *state = g_object_get_data(G_OBJECT(tabs), "tabs");
+    if (!state || state->stopped)
+        return;
+    state->open_mode = mode;
 }
 
 void tabs_shutdown(GtkWidget *tabs)

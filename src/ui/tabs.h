@@ -2,6 +2,7 @@
 
 #include <gtk/gtk.h>
 #include "settings/editor.h"
+#include "settings/opener.h"
 
 typedef void (*TabsChangedFunc)(GtkWidget *tabs, gpointer user_data);
 typedef void (*TabOpenFunc)(GFile *file, const char *display_name, gpointer user_data);
@@ -14,6 +15,7 @@ void tabs_save(GtkWidget *tabs);
 void tabs_find(GtkWidget *tabs);
 void tabs_find_next(GtkWidget *tabs, gboolean backward);
 void tabs_set_editor_settings(GtkWidget *tabs, const EditorSettings *settings);
+void tabs_set_open_with(GtkWidget *tabs, OpenerMode mode);
 gboolean tabs_restore_session(GtkWidget *tabs, GError **error);
 void tabs_set_session_enabled(GtkWidget *tabs, gboolean enabled);
 

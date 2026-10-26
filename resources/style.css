@@ -261,6 +261,20 @@ window.relapse-ui.fullscreen headerbar {
     color: @relapse_muted;
 }
 
+.relapse-ui button.launch-all-profiles {
+    min-height: 30px;
+    border-color: @relapse_border;
+    background-color: @relapse_control;
+}
+
+.relapse-ui .exclude-dialog .profiles-list row {
+    padding-right: 10px;
+}
+
+.relapse-ui .exclude-dialog button.save-excluded {
+    background-color: @relapse_selection;
+    border-color: @relapse_focus;
+}
 .relapse-ui button:focus-visible {
     outline: 2px solid @relapse_focus;
     outline-offset: 2px;
@@ -398,12 +412,10 @@ window.relapse-ui.fullscreen headerbar {
 }
 
 .relapse-ui button.navigation-button {
-    min-width: 42px;
-    min-height: 44px;
+    min-width: 46px;
+    min-height: 46px;
     padding: 0;
     border: 0;
-    border-left: 2px solid transparent;
-    border-right: 2px solid transparent;
     border-radius: 0;
     background-color: transparent;
 }
@@ -417,7 +429,7 @@ window.relapse-ui.fullscreen headerbar {
 }
 
 .relapse-ui button.navigation-button:checked {
-    border-left-color: @relapse_focus;
+    box-shadow: inset 2px 0 @relapse_focus;
     background-color: @relapse_control;
 }
 
@@ -494,12 +506,12 @@ window.relapse-ui.fullscreen headerbar {
 }
 
 .relapse-ui .settings-group spinbutton:focus-within,
-.relapse-ui .settings-group switch:focus-visible {
+.relapse-ui switch:focus-visible {
     outline: 2px solid @relapse_focus;
     outline-offset: 2px;
 }
 
-.relapse-ui .settings-group switch {
+.relapse-ui switch {
     min-width: 34px;
     min-height: 18px;
     padding: 2px;
@@ -509,16 +521,16 @@ window.relapse-ui.fullscreen headerbar {
     transition: background-color 140ms ease, border-color 140ms ease;
 }
 
-.relapse-ui .settings-group switch:hover {
+.relapse-ui switch:hover {
     border-color: @relapse_muted;
 }
 
-.relapse-ui .settings-group switch:checked {
+.relapse-ui switch:checked {
     background-color: @relapse_selection;
     border-color: @relapse_focus;
 }
 
-.relapse-ui .settings-group switch slider {
+.relapse-ui switch slider {
     min-width: 12px;
     min-height: 12px;
     border-radius: 999px;
@@ -526,11 +538,11 @@ window.relapse-ui.fullscreen headerbar {
     transition: background-color 140ms ease;
 }
 
-.relapse-ui .settings-group switch:checked slider {
+.relapse-ui switch:checked slider {
     background-color: @relapse_text;
 }
 
-.relapse-ui .settings-group switch image {
+.relapse-ui switch image {
     opacity: 0;
 }
 
@@ -869,4 +881,60 @@ window.relapse-ui.fullscreen headerbar {
     opacity: 0.8;
     border-color: #adc991;
     background: #adc991;
+}
+
+.relapse-ui .autoexec-page {
+    padding: 20px 24px;
+}
+
+.relapse-ui label.autoexec-page-title {
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.relapse-ui label.autoexec-description {
+    color: @relapse_muted;
+}
+
+.relapse-ui label.autoexec-title {
+    font-weight: 600;
+}
+
+.relapse-ui label.autoexec-hint {
+    font-size: 11px;
+    color: @relapse_muted;
+}
+
+.relapse-ui .autoexec-frame {
+    min-height: 200px;
+    border: 1px solid @relapse_border;
+    border-radius: 5px;
+    background-color: @relapse_editor;
+    transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.relapse-ui .autoexec-frame.drop-target {
+    border-color: @relapse_focus;
+    background-color: @relapse_control;
+}
+
+.relapse-ui list.autoexec-list {
+    padding: 4px;
+    background-color: transparent;
+}
+
+.relapse-ui list.autoexec-list row.autoexec-row {
+    min-height: 28px;
+    padding: 2px 10px;
+    border-radius: 3px;
+    background-color: transparent;
+}
+
+.relapse-ui list.autoexec-list row.autoexec-row:hover {
+    background-color: @relapse_control;
+}
+
+.relapse-ui label.autoexec-empty {
+    padding: 12px;
+    color: @relapse_muted;
 }
