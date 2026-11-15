@@ -8,6 +8,7 @@ typedef struct {
     int font_size;
     gboolean word_wrap;
     int indent_width;
+    gboolean shift_close_skips_prompt;
 } EditorSettings;
 
 EditorSettings editor_settings_defaults(void);

@@ -4,7 +4,10 @@
 
 EditorSettings editor_settings_defaults(void)
 {
-    return (EditorSettings){.font_size = 13, .word_wrap = FALSE, .indent_width = 4};
+    return (EditorSettings){
+        .font_size = 13, .word_wrap = FALSE, .indent_width = 4,
+        .shift_close_skips_prompt = TRUE,
+    };
 }
 
 static gboolean valid_font_size(int size)
@@ -30,6 +33,11 @@ gboolean editor_settings_load(EditorSettings *settings, GError **error)
     if (valid_indent_width(indent))
         settings->indent_width = indent;
     settings->word_wrap = g_key_file_get_boolean(file, "Editor", "word-wrap", NULL);
+    g_autoptr(GError) shift_error = NULL;
+    gboolean shift_skips = g_key_file_get_boolean(file, "Editor", "shift-close-skips-prompt",
+                                                  &shift_error);
+    if (!shift_error)
+        settings->shift_close_skips_prompt = shift_skips;
     return TRUE;
 }
 
@@ -46,5 +54,7 @@ gboolean editor_settings_save(const EditorSettings *settings, GError **error)
     g_key_file_set_integer(file, "Editor", "font-size", settings->font_size);
     g_key_file_set_boolean(file, "Editor", "word-wrap", settings->word_wrap);
     g_key_file_set_integer(file, "Editor", "indent-width", settings->indent_width);
+    g_key_file_set_boolean(file, "Editor", "shift-close-skips-prompt",
+                           settings->shift_close_skips_prompt);
     return store_save(file, error);
 }

@@ -3,14 +3,14 @@
 #include <errno.h>
 #include <glib/gstdio.h>
 
-static char *settings_path(void)
+char *store_settings_path(void)
 {
     return g_build_filename(g_get_user_config_dir(), "relapsegtk", "settings.ini", NULL);
 }
 
 GKeyFile *store_load(gboolean recover_invalid, GError **error)
 {
-    g_autofree char *path = settings_path();
+    g_autofree char *path = store_settings_path();
     g_autoptr(GKeyFile) file = g_key_file_new();
     g_autoptr(GError) failure = NULL;
     if (!g_key_file_load_from_file(file, path, G_KEY_FILE_KEEP_COMMENTS, &failure)) {
@@ -25,7 +25,7 @@ GKeyFile *store_load(gboolean recover_invalid, GError **error)
 
 gboolean store_save(GKeyFile *file, GError **error)
 {
-    g_autofree char *path = settings_path();
+    g_autofree char *path = store_settings_path();
     g_autofree char *directory = g_path_get_dirname(path);
     if (g_mkdir_with_parents(directory, 0700) != 0) {
         int saved_errno = errno;

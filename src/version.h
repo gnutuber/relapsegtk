@@ -1,3 +1,3 @@
 #pragma once
 
-#define RELAPSEGTK_VERSION "0.2.1"
+#define RELAPSEGTK_VERSION "0.2.2"

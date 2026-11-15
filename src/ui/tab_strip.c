@@ -1,4 +1,5 @@
 #include "tab_strip.h"
+#include "style.h"
 #include <math.h>
 
 typedef struct {
@@ -50,6 +51,15 @@ void tab_strip_reveal(GtkWidget *widget, GtkWidget *tab)
 {
     Strip *strip = g_object_get_data(G_OBJECT(widget), "tab-strip");
     g_set_object(&strip->pending, tab);
+    if (strip->tick) {
+        gtk_widget_remove_tick_callback(widget, strip->tick);
+        strip->tick = 0;
+    }
+    if (style_animations_disabled()) {
+        strip->frames = 1;
+        reveal_tab(widget, NULL, strip);
+        return;
+    }
     strip->frames = 0;
     if (!strip->tick) strip->tick = gtk_widget_add_tick_callback(widget, reveal_tab, strip, NULL);
 }

@@ -25,7 +25,7 @@ struct Autoexec {
 
 char *autoexec_directory_path(void)
 {
-    return g_build_filename(g_get_home_dir(), ".local", "share", "relapse", "autoexec", NULL);
+    return g_build_filename(g_get_home_dir(), ".config", "relapse", "autoexec", NULL);
 }
 
 static void show_error(Autoexec *state, const char *message)

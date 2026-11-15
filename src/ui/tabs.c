@@ -45,6 +45,7 @@ typedef struct {
     GtkWidget *tab;
     GtkWidget *title;
     GtkButton *select;
+    GtkImage *icon;
     GtkLabel *label;
     GtkWidget *name_entry;
     GtkPopover *menu;
@@ -165,9 +166,21 @@ void tabs_close_current(GtkWidget *tabs)
     }
 }
 
+static void update_origin_icon(Script *script)
+{
+    GFile *file = script->file ? script->file : script->save_file;
+    g_autofree char *directory = autoexec_directory_path();
+    g_autoptr(GFile) autoexec = g_file_new_for_path(directory);
+    gboolean is_autoexec = file && g_file_has_prefix(file, autoexec);
+    if (is_autoexec)
+        gtk_image_set_from_resource(script->icon, "/org/relapse/RelapseGtk/icons/autoexec.png");
+    gtk_widget_set_visible(GTK_WIDGET(script->icon), is_autoexec);
+}
+
 static void update_label(GtkTextBuffer *buffer, GtkWidget *page)
 {
     Script *script = g_object_get_data(G_OBJECT(page), "script");
+    update_origin_icon(script);
     g_autofree char *label = g_strdup_printf("%s%s", script->name,
         script->load ? " …" : gtk_text_buffer_get_modified(buffer) ? " •" : "");
     gtk_label_set_text(script->label, label);
@@ -620,14 +633,12 @@ static void confirm_close(GObject *dialog, GAsyncResult *result, gpointer user_d
     pending_page_free(pending);
 }
 
-static void close_tab(GtkButton *button, GtkWidget *page)
+static void close_script(Script *script, gboolean confirm)
 {
-    (void)button;
-    Script *script = g_object_get_data(G_OBJECT(page), "script");
     if (script->close_prompt)
         return;
     GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(script->editor));
-    if (!gtk_text_buffer_get_modified(buffer)) {
+    if (!confirm || !gtk_text_buffer_get_modified(buffer)) {
         remove_script(script);
         return;
     }
@@ -638,8 +649,31 @@ static void close_tab(GtkButton *button, GtkWidget *page)
     gtk_alert_dialog_set_cancel_button(dialog, 0);
     gtk_alert_dialog_set_default_button(dialog, 0);
     script->close_prompt = g_cancellable_new();
-    gtk_alert_dialog_choose(dialog, GTK_WINDOW(gtk_widget_get_root(page)), script->close_prompt,
+    gtk_alert_dialog_choose(dialog, GTK_WINDOW(gtk_widget_get_root(script->page)), script->close_prompt,
                             confirm_close, pending_page_new(script));
+}
+
+static void close_tab(GtkButton *button, GtkWidget *page)
+{
+    (void)button;
+    close_script(g_object_get_data(G_OBJECT(page), "script"), TRUE);
+}
+
+static void close_tab_shift_pressed(GtkGestureClick *gesture, int presses, double x, double y,
+                                    gpointer user_data)
+{
+    (void)x;
+    (void)y;
+    if (presses != 1)
+        return;
+    Script *script = user_data;
+    Tabs *tabs = g_object_get_data(G_OBJECT(script->notebook), "tabs");
+    if (!tabs || tabs->stopped || !tabs->editor_settings.shift_close_skips_prompt)
+        return;
+    if (!(gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(gesture)) & GDK_SHIFT_MASK))
+        return;
+    gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+    close_script(script, FALSE);
 }
 
 static gboolean has_script_extension(const char *name)
@@ -837,6 +871,59 @@ static gboolean script_modified(Script *script)
     GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(script->editor));
     return gtk_text_buffer_get_modified(buffer) ||
         (!script->file && gtk_text_buffer_get_char_count(buffer) > 0);
+}
+
+static void close_all_pages(GtkWidget *tabs)
+{
+    GtkNotebook *book = notebook_for(tabs);
+    for (int i = gtk_notebook_get_n_pages(book) - 1; i >= 0; --i) {
+        Script *script = g_object_get_data(G_OBJECT(gtk_notebook_get_nth_page(book, i)), "script");
+        if (script)
+            remove_script(script);
+    }
+}
+
+static void close_all_confirmed(GObject *dialog, GAsyncResult *result, gpointer user_data)
+{
+    GWeakRef *ref = user_data;
+    int choice = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(dialog), result, NULL);
+    g_autoptr(GtkWidget) tabs = g_weak_ref_get(ref);
+    if (tabs && choice == 1)
+        close_all_pages(tabs);
+    g_weak_ref_clear(ref);
+    g_free(ref);
+}
+
+void tabs_close_all(GtkWidget *tabs)
+{
+    Tabs *state = g_object_get_data(G_OBJECT(tabs), "tabs");
+    if (!state || state->stopped)
+        return;
+    GtkNotebook *book = notebook_for(tabs);
+    int pages = gtk_notebook_get_n_pages(book);
+    if (pages == 0)
+        return;
+    gboolean dirty = FALSE;
+    for (int i = 0; i < pages && !dirty; ++i)
+        dirty = script_modified(g_object_get_data(G_OBJECT(gtk_notebook_get_nth_page(book, i)),
+                                                 "script"));
+    if (!dirty) {
+        close_all_pages(tabs);
+        return;
+    }
+    g_autoptr(GtkAlertDialog) dialog = gtk_alert_dialog_new("Close all tabs?");
+    g_autofree char *detail = g_strdup_printf(
+        "%d open tab%s will be closed. Unsaved edits will be discarded.",
+        pages, pages == 1 ? "" : "s");
+    gtk_alert_dialog_set_detail(dialog, detail);
+    const char *buttons[] = {"Cancel", "Close all", NULL};
+    gtk_alert_dialog_set_buttons(dialog, buttons);
+    gtk_alert_dialog_set_cancel_button(dialog, 0);
+    gtk_alert_dialog_set_default_button(dialog, 0);
+    GWeakRef *ref = g_new0(GWeakRef, 1);
+    g_weak_ref_init(ref, tabs);
+    gtk_alert_dialog_choose(dialog, GTK_WINDOW(gtk_widget_get_root(tabs)), NULL,
+                            close_all_confirmed, ref);
 }
 
 static void tab_save_requested(GSimpleAction *action, GVariant *parameter, gpointer user_data)
@@ -1069,13 +1156,24 @@ static Script *new_script(GtkNotebook *notebook, GFile *file, const char *name, 
     gtk_label_set_ellipsize(script->label, PANGO_ELLIPSIZE_END);
     gtk_label_set_width_chars(script->label, 12);
     gtk_label_set_max_width_chars(script->label, 22);
-    gtk_button_set_child(GTK_BUTTON(select), GTK_WIDGET(script->label));
+    script->icon = GTK_IMAGE(gtk_image_new());
+    gtk_image_set_pixel_size(script->icon, 16);
+    GtkWidget *content = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_box_append(GTK_BOX(content), GTK_WIDGET(script->icon));
+    gtk_box_append(GTK_BOX(content), GTK_WIDGET(script->label));
+    gtk_button_set_child(GTK_BUTTON(select), content);
+    update_origin_icon(script);
     GtkWidget *close = gtk_button_new_with_label("×");
     gtk_widget_add_css_class(close, "tab-close");
     gtk_widget_set_tooltip_text(close, "Close tab");
     gtk_accessible_update_property(GTK_ACCESSIBLE(close), GTK_ACCESSIBLE_PROPERTY_LABEL, "Close tab", -1);
     gtk_box_append(GTK_BOX(tab), close);
     g_signal_connect(close, "clicked", G_CALLBACK(close_tab), script->page);
+    GtkGesture *close_shift = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(close_shift), GDK_BUTTON_PRIMARY);
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(close_shift), GTK_PHASE_CAPTURE);
+    g_signal_connect(close_shift, "pressed", G_CALLBACK(close_tab_shift_pressed), script);
+    gtk_widget_add_controller(close, GTK_EVENT_CONTROLLER(close_shift));
     g_autofree char *path = file ? g_file_get_parse_name(file) : g_strdup(name);
     gtk_widget_set_tooltip_text(tab, path);
     g_signal_connect_object(buffer, "modified-changed", G_CALLBACK(update_label), script->page, 0);
@@ -1377,6 +1475,15 @@ void tabs_set_open_with(GtkWidget *tabs, OpenerMode mode)
     if (!state || state->stopped)
         return;
     state->open_mode = mode;
+}
+
+void tabs_set_scripts_path(GtkWidget *tabs, const char *path)
+{
+    Tabs *state = g_object_get_data(G_OBJECT(tabs), "tabs");
+    if (!state || state->stopped)
+        return;
+    g_autoptr(GFile) folder = g_file_new_for_path(path);
+    g_set_object(&state->scripts_dir, folder);
 }
 
 void tabs_shutdown(GtkWidget *tabs)

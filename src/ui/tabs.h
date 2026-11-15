@@ -16,6 +16,7 @@ void tabs_find(GtkWidget *tabs);
 void tabs_find_next(GtkWidget *tabs, gboolean backward);
 void tabs_set_editor_settings(GtkWidget *tabs, const EditorSettings *settings);
 void tabs_set_open_with(GtkWidget *tabs, OpenerMode mode);
+void tabs_set_scripts_path(GtkWidget *tabs, const char *path);
 gboolean tabs_restore_session(GtkWidget *tabs, GError **error);
 void tabs_set_session_enabled(GtkWidget *tabs, gboolean enabled);
 
@@ -23,5 +24,6 @@ GtkTextBuffer *tabs_get_buffer(GtkWidget *tabs);
 const char *tabs_get_name(GtkWidget *tabs);
 GFile *tabs_get_current_file(GtkWidget *tabs);
 void tabs_close_current(GtkWidget *tabs);
+void tabs_close_all(GtkWidget *tabs);
 
 void tabs_shutdown(GtkWidget *tabs);
